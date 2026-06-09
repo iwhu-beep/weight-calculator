@@ -14,8 +14,16 @@ interface HistoryRecord {
   colorPowderAmount: number
 }
 
+interface VoiceOption {
+  voice: SpeechSynthesisVoice
+  label: string
+}
+
 interface Settings {
   soundEnabled: boolean
+  voiceEnabled: boolean
+  voiceIndex: number
+  voiceRate: number
   decimalPlaces: number
 }
 
@@ -24,9 +32,9 @@ const DEFAULT_WEIGHTS: WeightEntry[] = Array.from({ length: 10 }, (_, i) => ({ i
 function loadSettings(): Settings {
   try {
     const saved = localStorage.getItem('wc_settings')
-    if (saved) return JSON.parse(saved)
+    if (saved) return { ...JSON.parse(saved), voiceRate: JSON.parse(saved).voiceRate ?? 1.0 }
   } catch { /* ignore */ }
-  return { soundEnabled: true, decimalPlaces: 2 }
+  return { soundEnabled: true, voiceEnabled: false, voiceIndex: 0, voiceRate: 1.0, decimalPlaces: 2 }
 }
 
 function saveSettings(s: Settings) {
@@ -45,7 +53,7 @@ function saveHistory(records: HistoryRecord[]) {
   localStorage.setItem('wc_history', JSON.stringify(records.slice(0, 50)))
 }
 
-// 生成按键音
+// 按键音
 function playKeySound() {
   try {
     const ctx = new AudioContext()
@@ -62,6 +70,27 @@ function playKeySound() {
   } catch { /* ignore */ }
 }
 
+// 语音读数
+function speakNumber(text: string, voice: SpeechSynthesisVoice | null, rate: number) {
+  try {
+    window.speechSynthesis.cancel()
+    const utter = new SpeechSynthesisUtterance(text)
+    if (voice) utter.voice = voice
+    utter.rate = rate
+    utter.pitch = 1.0
+    window.speechSynthesis.speak(utter)
+  } catch { /* ignore */ }
+}
+
+// 数字转中文读法（用于语音播报）
+function numberToSpeech(value: string): string {
+  if (!value || value === '') return ''
+  const num = parseFloat(value)
+  if (isNaN(num)) return value
+  // 直接用数字读法，语音引擎会自动处理
+  return value
+}
+
 type Page = 'home' | 'settings' | 'history'
 
 function App() {
@@ -70,6 +99,7 @@ function App() {
   const [ratio, setRatio] = useState('')
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
+  const [voices, setVoices] = useState<VoiceOption[]>([])
   const nextIdRef = useRef(11)
 
   const totalWeight = weights.reduce((sum, w) => sum + (parseFloat(w.value) || 0), 0)
@@ -77,25 +107,73 @@ function App() {
   const ratioValue = parseFloat(ratio) || 0
   const colorPowderAmount = totalWeight * ratioValue
 
+  // 加载语音列表
+  useEffect(() => {
+    const loadVoices = () => {
+      const allVoices = window.speechSynthesis.getVoices()
+      // 优先中文语音，然后英文，然后其他
+      const zhVoices = allVoices.filter(v => v.lang.startsWith('zh'))
+      const enVoices = allVoices.filter(v => v.lang.startsWith('en'))
+      const otherVoices = allVoices.filter(v => !v.lang.startsWith('zh') && !v.lang.startsWith('en'))
+
+      const formatLabel = (v: SpeechSynthesisVoice, tag: string) => {
+        const langMap: Record<string, string> = {
+          'zh-CN': '普通话', 'zh-TW': '繁體', 'zh-HK': '粵語', 'zh': '中文',
+          'en-US': '美式英语', 'en-GB': '英式英语', 'en-AU': '澳式英语',
+          'en-IN': '印度英语', 'en-IE': '爱尔兰英语', 'en-ZA': '南非英语',
+          'ja-JP': '日语', 'ko-KR': '韩语', 'fr-FR': '法语', 'de-DE': '德语',
+          'es-ES': '西班牙语', 'pt-BR': '葡语', 'ru-RU': '俄语', 'it-IT': '意大利语',
+          'th-TH': '泰语', 'vi-VN': '越南语', 'id-ID': '印尼语', 'nl-NL': '荷兰语',
+          'pl-PL': '波兰语', 'ar-SA': '阿拉伯语', 'he-IL': '希伯来语',
+          'el-GR': '希腊语', 'cs-CZ': '捷克语', 'ro-RO': '罗马尼亚语',
+          'tr-TR': '土耳其语', 'sv-SE': '瑞典语', 'da-DK': '丹麦语',
+          'fi-FI': '芬兰语', 'nb-NO': '挪威语', 'hu-HU': '匈牙利语',
+        }
+        const langName = langMap[v.lang] || v.lang
+        return `${tag} ${langName} - ${v.name.replace(/Microsoft |Google |Apple |Samsung /g, '')}`
+      }
+
+      const sorted: VoiceOption[] = [
+        ...zhVoices.map(v => ({ voice: v, label: formatLabel(v, '🇨🇳') })),
+        ...enVoices.map(v => ({ voice: v, label: formatLabel(v, '🌍') })),
+        ...otherVoices.map(v => ({ voice: v, label: formatLabel(v, '🌐') })),
+      ]
+
+      setVoices(sorted)
+    }
+    loadVoices()
+    window.speechSynthesis.onvoiceschanged = loadVoices
+    return () => { window.speechSynthesis.onvoiceschanged = null }
+  }, [])
+
   useEffect(() => {
     saveSettings(settings)
   }, [settings])
 
-  const handleKeySound = useCallback(() => {
+  const getVoice = useCallback((): SpeechSynthesisVoice | null => {
+    if (voices.length === 0) return null
+    const idx = Math.min(settings.voiceIndex, voices.length - 1)
+    return voices[idx]?.voice ?? null
+  }, [voices, settings.voiceIndex])
+
+  const handleInput = useCallback((value: string) => {
     if (settings.soundEnabled) playKeySound()
-  }, [settings.soundEnabled])
+    if (settings.voiceEnabled && value) {
+      speakNumber(numberToSpeech(value), getVoice(), settings.voiceRate)
+    }
+  }, [settings.soundEnabled, settings.voiceEnabled, settings.voiceRate, getVoice])
 
   const handleWeightChange = useCallback((id: number, value: string) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
-    handleKeySound()
+    handleInput(value)
     setWeights(prev => prev.map(w => w.id === id ? { ...w, value } : w))
-  }, [handleKeySound])
+  }, [handleInput])
 
   const handleRatioChange = useCallback((value: string) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
-    handleKeySound()
+    handleInput(value)
     setRatio(value)
-  }, [handleKeySound])
+  }, [handleInput])
 
   const addRow = useCallback(() => {
     if (weights.length >= 20) return
@@ -146,10 +224,15 @@ function App() {
     saveHistory([])
   }, [])
 
+  const testVoice = useCallback(() => {
+    const voice = getVoice()
+    speakNumber('123.45', voice, settings.voiceRate)
+  }, [getVoice, settings.voiceRate])
+
   // 设置页面
   if (page === 'settings') {
     return (
-      <div className="app">
+      <div className="app safe-top">
         <div className="page-header">
           <button className="back-btn" onClick={() => setPage('home')}>← 返回</button>
           <h2>设置</h2>
@@ -159,7 +242,7 @@ function App() {
         <div className="card">
           <div className="card-title">
             <span className="card-title-icon">🔊</span>
-            声音设置
+            声音与语音
           </div>
           <div className="setting-row">
             <div>
@@ -175,6 +258,61 @@ function App() {
               <span className="toggle-slider" />
             </label>
           </div>
+          <div className="setting-row">
+            <div>
+              <div className="setting-label">语音读数</div>
+              <div className="setting-desc">输入数字时自动朗读数值</div>
+            </div>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={settings.voiceEnabled}
+                onChange={e => setSettings(prev => ({ ...prev, voiceEnabled: e.target.checked }))}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+          {settings.voiceEnabled && (
+            <>
+              <div className="setting-row">
+                <div>
+                  <div className="setting-label">语音选择</div>
+                  <div className="setting-desc">选择朗读语音（中文语音优先）</div>
+                </div>
+              </div>
+              <div className="voice-select-wrap">
+                <select
+                  className="voice-select"
+                  value={settings.voiceIndex}
+                  onChange={e => setSettings(prev => ({ ...prev, voiceIndex: parseInt(e.target.value) }))}
+                >
+                  {voices.map((v, i) => (
+                    <option key={i} value={i}>{v.label}</option>
+                  ))}
+                </select>
+                <button className="btn-test-voice" onClick={testVoice}>
+                  🔊 试听
+                </button>
+              </div>
+              <div className="setting-row">
+                <div>
+                  <div className="setting-label">语速</div>
+                  <div className="setting-desc">{settings.voiceRate === 0.5 ? '慢速' : settings.voiceRate === 0.75 ? '较慢' : settings.voiceRate === 1.0 ? '正常' : settings.voiceRate === 1.25 ? '较快' : '快速'}</div>
+                </div>
+                <div className="stepper">
+                  <button
+                    className="stepper-btn"
+                    onClick={() => setSettings(prev => ({ ...prev, voiceRate: Math.max(0.5, +(prev.voiceRate - 0.25).toFixed(2)) }))}
+                  >−</button>
+                  <span className="stepper-value">{settings.voiceRate}x</span>
+                  <button
+                    className="stepper-btn"
+                    onClick={() => setSettings(prev => ({ ...prev, voiceRate: Math.min(2.0, +(prev.voiceRate + 0.25).toFixed(2)) }))}
+                  >+</button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="card">
@@ -213,7 +351,7 @@ function App() {
             </div>
             <div className="about-row">
               <span>版本</span>
-              <span>v1.1.0</span>
+              <span>v1.2.0</span>
             </div>
             <div className="about-row">
               <span>用途</span>
@@ -228,7 +366,7 @@ function App() {
   // 历史记录页面
   if (page === 'history') {
     return (
-      <div className="app">
+      <div className="app safe-top">
         <div className="page-header">
           <button className="back-btn" onClick={() => setPage('home')}>← 返回</button>
           <h2>历史记录</h2>
@@ -292,7 +430,7 @@ function App() {
 
   // 主页面
   return (
-    <div className="app">
+    <div className="app safe-top">
       {/* Header */}
       <div className="header">
         <h1>
