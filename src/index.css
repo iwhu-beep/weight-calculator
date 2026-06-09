@@ -791,3 +791,33 @@ html, body {
   background: var(--primary);
   color: white;
 }
+
+/* Unit Toggle Buttons */
+.unit-toggle-group {
+  display: flex;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.unit-btn {
+  padding: 6px 14px;
+  border: none;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-right: 1px solid var(--border);
+}
+
+.unit-btn:last-child {
+  border-right: none;
+}
+
+.unit-btn-active {
+  background: var(--primary);
+  color: white;
+}
