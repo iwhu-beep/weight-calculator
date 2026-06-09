@@ -25,9 +25,6 @@ jobs:
       - name: Build web app
         run: npm run build
 
-      - name: Install CocoaPods
-        run: gem install cocoapods
-
       - name: Add iOS platform
         run: npx cap add ios
         continue-on-error: true
@@ -35,16 +32,23 @@ jobs:
       - name: Sync iOS project
         run: npx cap sync ios
 
+      - name: List iOS project structure
+        run: find ios -maxdepth 3 -type f | head -50
+
       - name: Build IPA (unsigned)
         run: |
-          cd ios/App
-          # Install pods
-          pod install
+          # Find the xcodeproj path
+          XCODEPROJ=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+          echo "Found Xcode project: $XCODEPROJ"
+          
+          PROJECT_DIR=$(dirname "$XCODEPROJ")
+          SCHEME=$(xcodebuild -list -project "$XCODEPROJ" 2>/dev/null | grep -A1 "Schemes:" | tail -1 | xargs)
+          echo "Using scheme: $SCHEME"
 
           # Build archive
           xcodebuild \
-            -workspace App.xcworkspace \
-            -scheme App \
+            -project "$XCODEPROJ" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
@@ -52,17 +56,19 @@ jobs:
             archive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
 
           # Create IPA from archive
           mkdir -p build/ipa/Payload
-          cp -r build/App.xcarchive/Products/Applications/App.app build/ipa/Payload/
+          cp -r build/App.xcarchive/Products/Applications/*.app build/ipa/Payload/
           cd build/ipa
           zip -r ../App.ipa Payload/
           cd ../..
 
-          # Move IPA to project root for upload
-          cp build/App.ipa ../../../App.ipa
+          # Move IPA to project root
+          cp build/App.ipa ./App.ipa
+          echo "IPA size: $(du -h App.ipa | cut -f1)"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
