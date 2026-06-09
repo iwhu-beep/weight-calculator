@@ -268,9 +268,9 @@ function App() {
     // 加载记录时也切换单位
     setSettings(prev => ({
       ...prev,
-      weightUnit: record.weightUnit || prev.weightUnit,
-      ratioUnit: record.ratioUnit || prev.ratioUnit,
-      resultUnit: record.resultUnit || prev.resultUnit,
+      weightUnit: (record.weightUnit as WeightUnit) || prev.weightUnit,
+      ratioUnit: (record.ratioUnit as RatioUnit) || prev.ratioUnit,
+      resultUnit: (record.resultUnit as ResultUnit) || prev.resultUnit,
     }))
     setPage('home')
   }, [])
