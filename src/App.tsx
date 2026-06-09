@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { KeepAwake } from '@capacitor-community/keep-awake'
 
 interface WeightEntry {
   id: number
@@ -171,17 +172,28 @@ function App() {
   const nextIdRef = useRef(settings.initialRows + 1)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
 
-  // 屏幕常亮 Wake Lock
+  // 屏幕常亮 - 优先使用 Capacitor KeepAwake，其次 Wake Lock API
   useEffect(() => {
-    const requestWakeLock = async () => {
+    const enableKeepAwake = async () => {
       try {
-        if ('wakeLock' in navigator && settings.screenAlwaysOn) {
-          wakeLockRef.current = await navigator.wakeLock.request('screen')
-          console.log('Wake Lock acquired')
-        }
-      } catch { /* ignore */ }
+        await KeepAwake.keepAwake()
+        console.log('KeepAwake enabled')
+      } catch (e) {
+        // Capacitor 插件不可用时，尝试浏览器 Wake Lock API
+        try {
+          if ('wakeLock' in navigator) {
+            const wakeLock = await navigator.wakeLock.request('screen')
+            wakeLockRef.current = wakeLock
+            console.log('Wake Lock acquired')
+          }
+        } catch { /* ignore */ }
+      }
     }
-    const releaseWakeLock = async () => {
+    const disableKeepAwake = async () => {
+      try {
+        await KeepAwake.allowSleep()
+        console.log('KeepAwake disabled')
+      } catch { /* ignore */ }
       try {
         if (wakeLockRef.current) {
           await wakeLockRef.current.release()
@@ -192,21 +204,21 @@ function App() {
     }
 
     if (settings.screenAlwaysOn) {
-      requestWakeLock()
+      enableKeepAwake()
     } else {
-      releaseWakeLock()
+      disableKeepAwake()
     }
 
     // 页面可见性变化时重新获取锁
     const handleVisibility = () => {
       if (document.visibilityState === 'visible' && settings.screenAlwaysOn) {
-        requestWakeLock()
+        enableKeepAwake()
       }
     }
     document.addEventListener('visibilitychange', handleVisibility)
 
     return () => {
-      releaseWakeLock()
+      disableKeepAwake()
       document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [settings.screenAlwaysOn])
