@@ -45,6 +45,7 @@ interface Settings {
   weightUnit: WeightUnit
   ratioUnit: RatioUnit
   resultUnit: ResultUnit
+  screenAlwaysOn: boolean
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -58,6 +59,7 @@ const DEFAULT_SETTINGS: Settings = {
   weightUnit: 'kg',
   ratioUnit: '‰',
   resultUnit: 'g',
+  screenAlwaysOn: false,
 }
 
 function loadSettings(): Settings {
@@ -167,6 +169,47 @@ function App() {
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const nextIdRef = useRef(settings.initialRows + 1)
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+
+  // 屏幕常亮 Wake Lock
+  useEffect(() => {
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator && settings.screenAlwaysOn) {
+          wakeLockRef.current = await navigator.wakeLock.request('screen')
+          console.log('Wake Lock acquired')
+        }
+      } catch { /* ignore */ }
+    }
+    const releaseWakeLock = async () => {
+      try {
+        if (wakeLockRef.current) {
+          await wakeLockRef.current.release()
+          wakeLockRef.current = null
+          console.log('Wake Lock released')
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (settings.screenAlwaysOn) {
+      requestWakeLock()
+    } else {
+      releaseWakeLock()
+    }
+
+    // 页面可见性变化时重新获取锁
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && settings.screenAlwaysOn) {
+        requestWakeLock()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      releaseWakeLock()
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [settings.screenAlwaysOn])
 
   // 原始输入值（按 weightUnit）
   const totalWeightRaw = weights.reduce((sum, w) => sum + (parseFloat(w.value) || 0), 0)
@@ -438,6 +481,24 @@ function App() {
                   onClick={() => setSettings(prev => ({ ...prev, resultUnit: u }))}>{u}</button>
               ))}
             </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">
+            <span className="card-title-icon">📱</span>
+            屏幕设置
+          </div>
+          <div className="setting-row">
+            <div>
+              <div className="setting-label">屏幕常亮</div>
+              <div className="setting-desc">录入数据时防止屏幕自动熄灭</div>
+            </div>
+            <label className="toggle">
+              <input type="checkbox" checked={settings.screenAlwaysOn}
+                onChange={e => setSettings(prev => ({ ...prev, screenAlwaysOn: e.target.checked }))} />
+              <span className="toggle-slider" />
+            </label>
           </div>
         </div>
 
