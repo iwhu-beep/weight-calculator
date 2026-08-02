@@ -23,6 +23,40 @@
   --shadow-lg: 0 8px 32px rgba(28,30,45,0.10), 0 2px 8px rgba(28,30,45,0.04);
   --radius: 16px;
   --radius-sm: 10px;
+  --total-gradient: linear-gradient(135deg, #4f6ef7 0%, #3a54d4 100%);
+  --total-glow: 0 4px 20px rgba(79,110,247,0.25), 0 2px 6px rgba(79,110,247,0.15);
+  --result-gradient: linear-gradient(135deg, #2ec47a 0%, #1fa864 100%);
+  --result-glow: 0 4px 20px rgba(46,196,122,0.25), 0 2px 6px rgba(46,196,122,0.15);
+}
+
+/* 深色主题：跟随系统时通过 data-theme 切换 */
+html[data-theme='dark'] {
+  --primary: #7b93ff;
+  --primary-light: #232a45;
+  --primary-dark: #5a74f0;
+  --primary-glow: rgba(123,147,255,0.2);
+  --success: #34d886;
+  --success-light: #123127;
+  --success-dark: #45e394;
+  --warning: #f5b84a;
+  --warning-light: #33291a;
+  --danger: #ff6b6b;
+  --danger-light: #3a2226;
+  --bg: #11141c;
+  --card-bg: #1a1e2b;
+  --text-primary: #eef0f8;
+  --text-secondary: #a8aec7;
+  --text-hint: #6b708a;
+  --border: #2a2f42;
+  --divider: #232839;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow: 0 2px 8px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.3);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
+  --total-gradient: linear-gradient(135deg, #3d55d0 0%, #2d41a8 100%);
+  --total-glow: 0 4px 20px rgba(60,80,200,0.35), 0 2px 6px rgba(60,80,200,0.25);
+  --result-gradient: linear-gradient(135deg, #1d9e63 0%, #157a4c 100%);
+  --result-glow: 0 4px 20px rgba(35,180,110,0.35), 0 2px 6px rgba(35,180,110,0.25);
 }
 
 * {
@@ -45,6 +79,11 @@ html, body {
   min-height: 100vh;
 }
 
+/* 主题切换平滑过渡 */
+html, html * {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.2s ease;
+}
+
 .app {
   max-width: 480px;
   margin: 0 auto;
@@ -61,12 +100,12 @@ html, body {
 /* ========== Header ========== */
 .header {
   text-align: center;
-  padding: 24px 0 20px;
+  padding: 8px 0 16px;
   position: relative;
 }
 
 .header h1 {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 800;
   color: var(--text-primary);
   display: flex;
@@ -77,20 +116,13 @@ html, body {
 }
 
 .header-icon {
-  font-size: 28px;
-}
-
-.header p {
-  font-size: 13px;
-  color: var(--text-hint);
-  margin-top: 4px;
-  font-weight: 400;
+  font-size: 24px;
 }
 
 .header-actions {
   position: absolute;
   right: 0;
-  top: 24px;
+  top: 4px;
   display: flex;
   gap: 6px;
 }
@@ -195,7 +227,7 @@ html, body {
 }
 
 .weight-input-filled {
-  background: #ffffff;
+  background: var(--card-bg);
   border-color: var(--success);
   color: var(--success-dark);
   font-weight: 700;
@@ -288,14 +320,15 @@ html, body {
 
 /* ========== Total Weight Card ========== */
 .total-card {
-  background: linear-gradient(135deg, #4f6ef7 0%, #3a54d4 100%);
+  background: var(--total-gradient);
   color: white;
   border-radius: var(--radius);
-  box-shadow: 0 4px 20px rgba(79,110,247,0.25), 0 2px 6px rgba(79,110,247,0.15);
+  box-shadow: var(--total-glow);
   padding: 22px 20px;
   margin-bottom: 14px;
   position: relative;
   overflow: hidden;
+  animation: fadeInUp 0.35s cubic-bezier(0.4,0,0.2,1);
 }
 
 .total-card::before {
@@ -333,6 +366,8 @@ html, body {
   letter-spacing: -1px;
   position: relative;
   z-index: 1;
+  display: inline-block;
+  animation: valuePulse 0.3s cubic-bezier(0.4,0,0.2,1);
 }
 
 .total-unit {
@@ -349,6 +384,14 @@ html, body {
   position: relative;
   z-index: 1;
   font-weight: 400;
+}
+
+/* 总重量数字变化脉冲动画 */
+@keyframes valuePulse {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.08); }
+  60% { transform: scale(0.98); }
+  100% { transform: scale(1); }
 }
 
 /* ========== Ratio Input ========== */
@@ -450,15 +493,22 @@ html, body {
 
 /* ========== Result Card ========== */
 .result-card {
-  background: linear-gradient(135deg, #2ec47a 0%, #1fa864 100%);
+  background: var(--result-gradient);
   color: white;
   border-radius: var(--radius);
-  box-shadow: 0 4px 20px rgba(46,196,122,0.25), 0 2px 6px rgba(46,196,122,0.15);
+  box-shadow: var(--result-glow);
   padding: 22px 20px;
   margin-bottom: 14px;
   animation: fadeInUp 0.35s cubic-bezier(0.4,0,0.2,1);
   position: relative;
   overflow: hidden;
+}
+
+/* 正向结果卡吸顶，滚动时始终可见 */
+.result-card-sticky {
+  position: sticky;
+  top: 10px;
+  z-index: 10;
 }
 
 .result-card::before {
@@ -485,6 +535,8 @@ html, body {
   letter-spacing: -1px;
   position: relative;
   z-index: 1;
+  display: inline-block;
+  animation: valuePulse 0.3s cubic-bezier(0.4,0,0.2,1);
 }
 
 .result-unit {
@@ -712,9 +764,13 @@ html, body {
   position: absolute;
   cursor: pointer;
   top: 0; left: 0; right: 0; bottom: 0;
-  background-color: #d0d3de;
+  background-color: #c6cadb;
   border-radius: 28px;
   transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+}
+
+html[data-theme='dark'] .toggle-slider {
+  background-color: #3a3f55;
 }
 
 .toggle-slider::before {
@@ -1009,6 +1065,30 @@ html, body {
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
+}
+
+/* 独立卡片形态的 segmented control */
+.mode-toggle-card {
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+  border: none;
+  padding: 8px;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.mode-toggle-card .mode-btn {
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.mode-toggle-card .mode-btn-active {
+  background: var(--primary);
+  color: white;
+  box-shadow: 0 2px 8px rgba(79,110,247,0.3);
 }
 
 .mode-btn {

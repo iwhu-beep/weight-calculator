@@ -84,6 +84,7 @@ interface Settings {
   ratioUnit: RatioUnit
   resultUnit: ResultUnit
   screenAlwaysOn: boolean
+  darkMode: 'system' | 'light' | 'dark'
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -99,6 +100,7 @@ const DEFAULT_SETTINGS: Settings = {
   ratioUnit: '‰',
   resultUnit: 'g',
   screenAlwaysOn: false,
+  darkMode: 'system',
 }
 
 function loadSettings(): Settings {
@@ -538,6 +540,19 @@ function App() {
     saveSettings(settings)
   }, [settings])
 
+  // 主题：跟随系统 / 浅色 / 深色，设置 html[data-theme]
+  useEffect(() => {
+    const root = document.documentElement
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const apply = () => {
+      const dark = settings.darkMode === 'dark' || (settings.darkMode === 'system' && mq.matches)
+      root.setAttribute('data-theme', dark ? 'dark' : 'light')
+    }
+    apply()
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
+  }, [settings.darkMode])
+
   // 关闭语音读数时取消尚未触发的防抖朗读
   useEffect(() => {
     if (!settings.voiceEnabled && voiceTimerRef.current !== null) {
@@ -940,6 +955,25 @@ function App() {
 
         <div className="card">
           <div className="card-title">
+            <span className="card-title-icon">🎨</span>
+            外观设置
+          </div>
+          <div className="setting-row">
+            <div>
+              <div className="setting-label">深色模式</div>
+              <div className="setting-desc">跟随系统或手动切换明暗主题</div>
+            </div>
+            <div className="unit-toggle-group">
+              {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([key, label]) => (
+                <button key={key} className={`unit-btn ${settings.darkMode === key ? 'unit-btn-active' : ''}`}
+                  onClick={() => setSettings(prev => ({ ...prev, darkMode: key }))}>{label}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">
             <span className="card-title-icon">📐</span>
             输入设置
           </div>
@@ -1094,13 +1128,13 @@ function App() {
             <div className="empty-state">
               <span className="empty-icon">📋</span>
               <p>暂无历史记录</p>
-              <p className="empty-sub">计算完成后点击"保存记录"即可保存</p>
+              <p className="empty-sub">配比结果有效时会自动保存，无需手动操作</p>
             </div>
           </div>
         ) : (
           <>
             <div className="history-actions">
-              <span className="history-count">共 {history.length} 条记录</span>
+              <span className="history-count">共 {history.length} 条记录 · 点击卡片回填</span>
               <button className="btn-clear" onClick={clearHistory}>清空全部</button>
             </div>
             {history.map(record => (
@@ -1150,14 +1184,14 @@ function App() {
           <span className="header-icon">⚖️</span>
           称重色粉计算器
         </h1>
-        <p>记录称重数据 · 计算色粉添加量</p>
         <div className="header-actions">
           <button className="header-btn" onClick={() => setPage('history')} title="历史记录">📋</button>
           <button className="header-btn" onClick={() => setPage('settings')} title="设置">⚙️</button>
         </div>
       </div>
 
-      {/* Weight Input Card */}
+      {/* Weight Input Card - 仅正向配比模式 */}
+      {calcMode === 'forward' && (
       <div className="card">
         <div className="card-title">
           <span className="card-title-icon">📦</span>
@@ -1191,37 +1225,34 @@ function App() {
             : `+ 添加一行（${weights.length}/${settings.maxRows}）`}
         </button>
       </div>
+      )}
 
-      {/* Total Weight Card */}
-      <div className="total-card">
-        <div className="card-title">
-          <span className="card-title-icon">📊</span>
-          总重量
-        </div>
-        <div>
-          <span className="total-value">{totalWeightRaw.toFixed(settings.decimalPlaces)}</span>
-          <span className="total-unit">{settings.weightUnit}</span>
-        </div>
-        <div className="total-detail">
-          已录入 {filledCount} 次 · 共 {weights.length} 行
-        </div>
+      {/* 计算方式切换 - 紧凑 segmented control */}
+      <div className="mode-toggle-group mode-toggle-card">
+        <button className={`mode-btn ${calcMode === 'forward' ? 'mode-btn-active' : ''}`}
+          onClick={() => setCalcMode('forward')}>色粉配比</button>
+        <button className={`mode-btn ${calcMode === 'reverseWeight' ? 'mode-btn-active' : ''}`}
+          onClick={() => setCalcMode('reverseWeight')}>求总重量</button>
+        <button className={`mode-btn ${calcMode === 'reverseRatio' ? 'mode-btn-active' : ''}`}
+          onClick={() => setCalcMode('reverseRatio')}>求比例</button>
       </div>
 
-      {/* 计算方式切换 */}
-      <div className="card">
-        <div className="card-title">
-          <span className="card-title-icon">🧮</span>
-          计算方式
+      {/* Total Weight Card - 仅正向配比模式 */}
+      {calcMode === 'forward' && (
+        <div className="total-card">
+          <div className="card-title">
+            <span className="card-title-icon">📊</span>
+            总重量
+          </div>
+          <div>
+            <span key={totalWeightRaw} className="total-value">{totalWeightRaw.toFixed(settings.decimalPlaces)}</span>
+            <span className="total-unit">{settings.weightUnit}</span>
+          </div>
+          <div className="total-detail">
+            已录入 {filledCount} 次 · 共 {weights.length} 行
+          </div>
         </div>
-        <div className="mode-toggle-group">
-          <button className={`mode-btn ${calcMode === 'forward' ? 'mode-btn-active' : ''}`}
-            onClick={() => setCalcMode('forward')}>色粉配比</button>
-          <button className={`mode-btn ${calcMode === 'reverseWeight' ? 'mode-btn-active' : ''}`}
-            onClick={() => setCalcMode('reverseWeight')}>求总重量</button>
-          <button className={`mode-btn ${calcMode === 'reverseRatio' ? 'mode-btn-active' : ''}`}
-            onClick={() => setCalcMode('reverseRatio')}>求比例</button>
-        </div>
-      </div>
+      )}
 
       {/* 反算总重量 */}
       {calcMode === 'reverseWeight' && (
@@ -1377,7 +1408,7 @@ function App() {
 
       {/* Result Card */}
       {totalWeightRaw > 0 && hasAnyRatio && (
-        <div className="result-card">
+        <div className="result-card result-card-sticky">
           <div className="card-title">
             <span className="card-title-icon">✅</span>
             色粉添加量
