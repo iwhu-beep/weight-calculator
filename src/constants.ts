@@ -7,7 +7,6 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceIndex: 0,
   voiceRate: 1.0,
   decimalPlaces: 2,
-  initialRows: 10,
   maxRows: 20,
   weightUnit: 'kg',
   ratioUnit: '‰',

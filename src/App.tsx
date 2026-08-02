@@ -11,7 +11,6 @@ import {
   calcColorPowder,
   calcReverseRatio,
   calcReverseWeight,
-  createDefaultWeights,
   isSameBatch,
   recordSignature,
 } from './lib/calc'
@@ -61,8 +60,9 @@ function App() {
   const [weights, setWeights] = useState<WeightEntry[]>(() =>
     initialDraft
       ? initialDraft.weights.slice(0, initialSettings.maxRows).map((v, i) => ({ id: i + 1, value: v }))
-      : createDefaultWeights(initialSettings.initialRows)
+      : []
   )
+  const [entryValue, setEntryValue] = useState(initialDraft?.entryValue ?? '')
   const [recipe, setRecipe] = useState<RecipeEntry[]>(() =>
     initialDraft && initialDraft.recipe.length > 0
       ? initialDraft.recipe.map((r, i) => ({ id: i + 1, name: r.name, ratio: r.ratio }))
@@ -77,7 +77,7 @@ function App() {
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voicesLoaded, setVoicesLoaded] = useState(false)
-  const nextIdRef = useRef(initialDraft ? initialDraft.weights.length + 1 : initialSettings.initialRows + 1)
+  const nextIdRef = useRef(initialDraft ? initialDraft.weights.length + 1 : 1)
   const nextRecipeIdRef = useRef(initialDraft && initialDraft.recipe.length > 0 ? initialDraft.recipe.length + 1 : 2)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
   const voiceTimerRef = useRef<number | null>(null)
@@ -148,7 +148,7 @@ function App() {
 
   // 原始输入值（按 weightUnit）
   const totalWeightRaw = weights.reduce((sum, w) => sum + (parseFloat(w.value) || 0), 0)
-  const filledCount = weights.filter(w => w.value !== '').length
+  const filledCount = weights.length
   const powderResults = recipe.map(r => {
     const ratioValue = parseFloat(r.ratio) || 0
     return {
@@ -248,6 +248,7 @@ function App() {
         revRatio,
         revWeight,
         revAmount,
+        entryValue,
         savedAt: Date.now(),
       })
       saveDraftTimerRef.current = null
@@ -257,7 +258,7 @@ function App() {
         window.clearTimeout(saveDraftTimerRef.current)
       }
     }
-  }, [weights, recipe, calcMode, revPowder, revRatio, revWeight, revAmount])
+  }, [weights, recipe, calcMode, revPowder, revRatio, revWeight, revAmount, entryValue])
 
   const getVoice = useCallback((): SpeechSynthesisVoice | null => {
     if (voices.length === 0) return null
@@ -283,17 +284,27 @@ function App() {
     if (settings.voiceEnabled) speakDebounced(value)
   }, [settings.soundEnabled, settings.hapticEnabled, settings.voiceEnabled, speakDebounced])
 
-  // 键盘快捷键：Enter 跳到下一个输入框，快速连续录入
-  const handleWeightKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, index: number) => {
+  const addWeightEntry = useCallback(() => {
+    const v = entryValue.trim()
+    if (v === '' || parseFloat(v) <= 0) return
+    if (weights.length >= settings.maxRows) {
+      window.alert(`已达上限（${settings.maxRows} 行）`)
+      return
+    }
+    const id = nextIdRef.current++
+    setWeights(prev => [...prev, { id, value: v }])
+    setEntryValue('')
+    weightInputRefs.current[0]?.focus()
+  }, [entryValue, weights.length, settings.maxRows])
+
+  // 键盘快捷键：Enter 提交当前输入
+  const handleEntryKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return
     e.preventDefault()
-    const next = weightInputRefs.current[index + 1]
-    if (next) {
-      next.focus()
-    } else if (recipeRatioInputRefs.current[0]) {
-      recipeRatioInputRefs.current[0].focus()
+    if (entryValue !== '' && weights.length < settings.maxRows) {
+      addWeightEntry()
     }
-  }, [])
+  }, [entryValue, weights.length, settings.maxRows, addWeightEntry])
 
   const handleRecipeNameKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, index: number) => {
     if (e.key !== 'Enter') return
@@ -312,10 +323,10 @@ function App() {
     }
   }, [])
 
-  const handleWeightChange = useCallback((id: number, value: string) => {
+  const handleEntryChange = useCallback((value: string) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
     handleInput(value)
-    setWeights(prev => prev.map(w => w.id === id ? { ...w, value } : w))
+    setEntryValue(value)
   }, [handleInput])
 
   const handleRecipeRatioChange = useCallback((id: number, value: string) => {
@@ -401,20 +412,14 @@ function App() {
     setRecipe(prev => prev.filter(r => r.id !== id))
   }, [recipe.length])
 
-  const addRow = useCallback(() => {
-    if (weights.length >= settings.maxRows) return
-    const id = nextIdRef.current++
-    setWeights(prev => [...prev, { id, value: '' }])
-  }, [weights.length, settings.maxRows])
-
   const removeRow = useCallback((id: number) => {
-    if (weights.length <= 1) return
     setWeights(prev => prev.filter(w => w.id !== id))
-  }, [weights.length])
+  }, [])
 
   const resetAll = useCallback(() => {
-    setWeights(createDefaultWeights(settings.initialRows))
-    nextIdRef.current = settings.initialRows + 1
+    setWeights([])
+    setEntryValue('')
+    nextIdRef.current = 1
     setRecipe([{ id: 1, name: '', ratio: '' }])
     nextRecipeIdRef.current = 2
     setCalcMode('forward')
@@ -423,7 +428,7 @@ function App() {
     setRevWeight('')
     setRevAmount('')
     clearDraft()
-  }, [settings.initialRows])
+  }, [])
 
   const buildRecord = useCallback((): HistoryRecord | null => {
     const storedRecipe = recipe
@@ -500,9 +505,11 @@ function App() {
   }, [calcMode, totalWeightRaw, hasAnyRatio, buildRecord, persistRecord])
 
   const loadRecord = useCallback((record: HistoryRecord) => {
-    // 钳制到 maxRows，避免行数超出上限
-    const rows = record.weights.slice(0, settings.maxRows).map((v, i) => ({ id: i + 1, value: v }))
+    // 钳制到 maxRows，避免行数超出上限，并过滤空值
+    const vals = record.weights.filter(v => v !== '')
+    const rows = vals.slice(0, settings.maxRows).map((v, i) => ({ id: i + 1, value: v }))
     setWeights(rows)
+    setEntryValue('')
     nextIdRef.current = rows.length + 1
     const loadedRecipe: RecipeEntry[] = record.recipe.length > 0
       ? record.recipe.map((p, i) => ({ id: i + 1, name: p.name, ratio: p.ratio > 0 ? p.ratio.toString() : '' }))
@@ -614,7 +621,6 @@ function App() {
         if (!window.confirm('导入将覆盖当前全部设置、历史记录与配方预设，确定继续？')) return
         if (data.settings && typeof data.settings === 'object') {
           const merged: Settings = { ...DEFAULT_SETTINGS, ...data.settings, voiceRate: data.settings.voiceRate ?? 1.0 }
-          if (merged.initialRows > merged.maxRows) merged.initialRows = merged.maxRows
           setSettings(merged)
           saveSettings(merged)
         }
@@ -681,40 +687,53 @@ function App() {
         </div>
       </div>
 
-      {/* Weight Input Card - 仅正向配比模式 */}
+      {/* Weight Entry - 仅正向配比模式：单输入框 + 回车记录，下方列出已记录数据 */}
       {calcMode === 'forward' && (
       <div className="card">
         <div className="card-title">
           <span className="card-title-icon">📦</span>
           称重数据录入
         </div>
-        <div className="weight-rows">
-          {weights.map((w, index) => (
-            <div key={w.id} className={`weight-row ${w.value !== '' ? 'weight-row-filled' : ''}`}>
-              <span className={`weight-label ${w.value !== '' ? 'weight-label-filled' : ''}`}>
-                第{index + 1}次
-              </span>
-              <div className="weight-input-wrap">
-                <input type="text" inputMode="decimal"
-                  ref={el => { weightInputRefs.current[index] = el }}
-                  className={`weight-input ${w.value !== '' ? 'weight-input-filled' : ''}`}
-                  placeholder={`输入重量(${settings.weightUnit})`}
-                  value={w.value}
-                  onChange={e => handleWeightChange(w.id, e.target.value)}
-                  onKeyDown={e => handleWeightKeyDown(e, index)} />
-                <span className="weight-unit">{settings.weightUnit}</span>
-              </div>
-              {weights.length > 1 && (
-                <button className="remove-row-btn" onClick={() => removeRow(w.id)} title="删除此行">✕</button>
-              )}
-            </div>
-          ))}
+        <div className="weight-entry-row">
+          <div className="weight-input-wrap">
+            <input type="text" inputMode="decimal"
+              ref={el => { weightInputRefs.current[0] = el }}
+              className={`weight-input weight-entry-input ${entryValue !== '' ? 'weight-input-filled' : ''}`}
+              placeholder={`输入重量(${settings.weightUnit})后回车`}
+              value={entryValue}
+              onChange={e => handleEntryChange(e.target.value)}
+              onKeyDown={handleEntryKeyDown} />
+            <span className="weight-unit">{settings.weightUnit}</span>
+          </div>
+          <button className="btn btn-primary btn-sm weight-entry-btn"
+            onClick={addWeightEntry} disabled={entryValue === ''}>
+            记录
+          </button>
         </div>
-        <button className="add-row-btn" onClick={addRow} disabled={weights.length >= settings.maxRows}>
-          {weights.length >= settings.maxRows
-            ? `已达上限（${settings.maxRows} 行）`
-            : `+ 添加一行（${weights.length}/${settings.maxRows}）`}
-        </button>
+        <div className="weight-list-meta">
+          <span>已记录 {weights.length} / {settings.maxRows} 次</span>
+          {weights.length > 0 && (
+            <button className="btn-link-danger" onClick={() => setWeights([])}>清空</button>
+          )}
+        </div>
+        {weights.length > 0 ? (
+          <div className="weight-rows">
+            {weights.map((w, index) => (
+              <div key={w.id} className="weight-row weight-row-filled">
+                <span className="weight-label weight-label-filled">
+                  第{index + 1}次
+                </span>
+                <div className="weight-input-wrap">
+                  <span className="weight-value">{w.value}</span>
+                  <span className="weight-unit">{settings.weightUnit}</span>
+                </div>
+                <button className="remove-row-btn" onClick={() => removeRow(w.id)} title="删除此行">✕</button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-hint">输入重量后按回车记录，录入数据将自动累加为总重量</div>
+        )}
       </div>
       )}
 
@@ -740,7 +759,7 @@ function App() {
             <span className="total-unit">{settings.weightUnit}</span>
           </div>
           <div className="total-detail">
-            已录入 {filledCount} 次 · 共 {weights.length} 行
+            已录入 {filledCount} 次
           </div>
         </div>
       )}

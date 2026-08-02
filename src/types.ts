@@ -45,6 +45,7 @@ export interface Draft {
   revRatio?: string
   revWeight?: string
   revAmount?: string
+  entryValue?: string
   savedAt: number
 }
 
@@ -69,7 +70,6 @@ export interface Settings {
   voiceIndex: number
   voiceRate: number
   decimalPlaces: number
-  initialRows: number
   maxRows: number
   weightUnit: WeightUnit
   ratioUnit: RatioUnit

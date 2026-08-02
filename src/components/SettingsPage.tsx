@@ -137,19 +137,6 @@ export default function SettingsPage({
         </div>
         <div className="setting-row">
           <div>
-            <div className="setting-label">初始显示行数</div>
-            <div className="setting-desc">打开时默认显示的输入行数</div>
-          </div>
-          <div className="stepper">
-            <button className="stepper-btn"
-              onClick={() => setSettings(prev => ({ ...prev, initialRows: Math.max(1, prev.initialRows - 1) }))}>−</button>
-            <span className="stepper-value">{settings.initialRows}</span>
-            <button className="stepper-btn"
-              onClick={() => setSettings(prev => ({ ...prev, initialRows: Math.min(prev.maxRows, prev.initialRows + 1) }))}>+</button>
-          </div>
-        </div>
-        <div className="setting-row">
-          <div>
             <div className="setting-label">最大输入行数</div>
             <div className="setting-desc">允许添加的最大行数（5~50）</div>
           </div>
@@ -157,7 +144,7 @@ export default function SettingsPage({
               <button className="stepper-btn"
                 onClick={() => setSettings(prev => {
                   const newMax = Math.max(5, prev.maxRows - 5)
-                  return { ...prev, maxRows: newMax, initialRows: Math.min(prev.initialRows, newMax) }
+                  return { ...prev, maxRows: newMax }
                 })}>−</button>
             <span className="stepper-value">{settings.maxRows}</span>
             <button className="stepper-btn"
