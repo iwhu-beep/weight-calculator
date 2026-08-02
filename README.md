@@ -9,7 +9,6 @@
 - **实时总重量计算** — 自动汇总所有已输入的重量数据
 - **多色粉配比计算** — 支持多种色粉分别按比例添加，自动生成每种色粉的添加量及合计
 - **配方预设** — 保存常用色粉配比组合，一键套用或删除
-- **反向计算** — 已知色粉添加量和比例反算所需总重量，或已知总重量和色粉量反算添加比例
 - **单位自由切换** — 重量单位（kg/g）、比例单位（‰/%）、结果单位（g/mg/kg）均可自定义
 
 ### 实用功能
@@ -110,13 +109,9 @@ npx cap open ios
 
 ```
 色粉添加量 = 总重量 × 色粉比例
-总重量 = 色粉添加量 ÷ 色粉比例
-色粉比例 = 色粉添加量 ÷ 总重量
 ```
 
 **示例：** 总重量 100kg，色粉比例 5‰ → 色粉添加量 = 500g
-**示例：** 色粉添加量 500g，色粉比例 5‰ → 总重量 = 100kg
-**示例：** 色粉添加量 500g，总重量 100kg → 色粉比例 = 5‰
 
 系统会自动处理单位换算：
 - 重量 g → kg 自动 ÷1000
@@ -128,16 +123,25 @@ npx cap open ios
 ```
 weight-calculator/
 ├── src/
-│   ├── App.tsx          # 主应用组件
-│   ├── index.css        # 全局样式
-│   ├── main.tsx         # 入口文件
-│   └── vite-env.d.ts    # Vite 类型声明
+│   ├── App.tsx                # 主应用组件（主页面）
+│   ├── components/
+│   │   ├── SettingsPage.tsx   # 设置页
+│   │   └── HistoryPage.tsx    # 历史记录页
+│   ├── lib/
+│   │   ├── calc.ts            # 计算、记录签名、同批次判定
+│   │   ├── media.ts           # 按键音、触觉、语音读数
+│   │   └── storage.ts         # localStorage 读写与迁移
+│   ├── constants.ts           # 默认设置与常量
+│   ├── types.ts               # 共享类型
+│   ├── index.css              # 全局样式
+│   ├── main.tsx               # 入口文件
+│   └── vite-env.d.ts          # Vite 类型声明
 ├── .github/
 │   └── workflows/
-│       └── build-ipa.yml  # iOS IPA 自动构建
-├── capacitor.config.json  # Capacitor 配置
-├── vite.config.ts         # Vite 配置
-├── tsconfig.json          # TypeScript 配置
+│       └── build-ipa.yml      # iOS IPA 自动构建
+├── capacitor.config.json      # Capacitor 配置
+├── vite.config.ts             # Vite 配置
+├── tsconfig.json              # TypeScript 配置
 └── package.json
 ```
 

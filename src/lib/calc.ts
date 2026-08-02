@@ -37,54 +37,6 @@ export function calcColorPowder(
   return resultG // g
 }
 
-/**
- * 反算总重量：已知色粉添加量和比例，求所需总重量
- * 总重量(kg) = 色粉量(g) / 比例(‰)
- */
-export function calcReverseWeight(
-  powderAmount: number,
-  ratioValue: number,
-  weightUnit: WeightUnit,
-  ratioUnit: RatioUnit,
-  resultUnit: ResultUnit,
-): number {
-  // 色粉量统一转 g
-  let amountG = powderAmount
-  if (resultUnit === 'mg') amountG = powderAmount / 1000
-  if (resultUnit === 'kg') amountG = powderAmount * 1000
-  // 比例统一转 ‰
-  let ratioPermille = ratioValue
-  if (ratioUnit === '%') ratioPermille = ratioValue * 10
-  // 总重量 kg
-  const weightKg = ratioPermille > 0 ? amountG / ratioPermille : 0
-  if (weightUnit === 'g') return weightKg * 1000
-  return weightKg
-}
-
-/**
- * 反算比例：已知总重量和色粉添加量，求添加比例
- * 比例(‰) = 色粉量(g) / 总重量(kg)
- */
-export function calcReverseRatio(
-  totalWeight: number,
-  powderAmount: number,
-  weightUnit: WeightUnit,
-  ratioUnit: RatioUnit,
-  resultUnit: ResultUnit,
-): number {
-  // 总重量统一转 kg
-  let weightKg = totalWeight
-  if (weightUnit === 'g') weightKg = totalWeight / 1000
-  // 色粉量统一转 g
-  let amountG = powderAmount
-  if (resultUnit === 'mg') amountG = powderAmount / 1000
-  if (resultUnit === 'kg') amountG = powderAmount * 1000
-  // 比例 ‰
-  const ratioPermille = weightKg > 0 ? amountG / weightKg : 0
-  if (ratioUnit === '%') return ratioPermille / 10
-  return ratioPermille
-}
-
 // 记录内容签名，用于自动保存去重：内容完全相同则不重复保存
 export function recordSignature(r: HistoryRecord): string {
   return JSON.stringify([

@@ -35,16 +35,9 @@ export interface RecipePreset {
   createdAt: number
 }
 
-export type CalcMode = 'forward' | 'reverseWeight' | 'reverseRatio'
-
 export interface Draft {
   weights: string[]
   recipe: { name: string; ratio: string }[]
-  calcMode?: CalcMode
-  revPowder?: string
-  revRatio?: string
-  revWeight?: string
-  revAmount?: string
   entryValue?: string
   savedAt: number
 }

@@ -7,13 +7,7 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import HistoryPage from './components/HistoryPage'
 import SettingsPage from './components/SettingsPage'
 import { DEFAULT_SETTINGS, MAX_RECIPE_ROWS } from './constants'
-import {
-  calcColorPowder,
-  calcReverseRatio,
-  calcReverseWeight,
-  isSameBatch,
-  recordSignature,
-} from './lib/calc'
+import { calcColorPowder, isSameBatch, recordSignature } from './lib/calc'
 import { playHaptic, playKeySound, speakNumber } from './lib/media'
 import {
   clearDraft,
@@ -28,7 +22,6 @@ import {
   saveSettings,
 } from './lib/storage'
 import type {
-  CalcMode,
   Draft,
   HistoryRecord,
   Page,
@@ -68,11 +61,6 @@ function App() {
       ? initialDraft.recipe.map((r, i) => ({ id: i + 1, name: r.name, ratio: r.ratio }))
       : [{ id: 1, name: '', ratio: '' }]
   )
-  const [calcMode, setCalcMode] = useState<CalcMode>(initialDraft?.calcMode ?? 'forward')
-  const [revPowder, setRevPowder] = useState(initialDraft?.revPowder ?? '')
-  const [revRatio, setRevRatio] = useState(initialDraft?.revRatio ?? '')
-  const [revWeight, setRevWeight] = useState(initialDraft?.revWeight ?? '')
-  const [revAmount, setRevAmount] = useState(initialDraft?.revAmount ?? '')
   const [presets, setPresets] = useState<RecipePreset[]>(loadPresets)
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
   const [voices, setVoices] = useState<VoiceOption[]>([])
@@ -162,18 +150,6 @@ function App() {
   const hasAnyRatio = powderResults.some(p => p.ratio > 0)
   const totalPowderAmount = powderResults.reduce((s, p) => s + p.amount, 0)
 
-  // 反向计算结果
-  const revPowderNum = parseFloat(revPowder) || 0
-  const revRatioNum = parseFloat(revRatio) || 0
-  const revWeightNum = parseFloat(revWeight) || 0
-  const revAmountNum = parseFloat(revAmount) || 0
-  const reverseWeightResult = revPowderNum > 0 && revRatioNum > 0
-    ? calcReverseWeight(revPowderNum, revRatioNum, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
-    : null
-  const reverseRatioResult = revWeightNum > 0 && revAmountNum > 0
-    ? calcReverseRatio(revWeightNum, revAmountNum, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
-    : null
-
   // 加载语音列表 - 仅中文
   useEffect(() => {
     const loadVoices = () => {
@@ -243,11 +219,6 @@ function App() {
       saveDraft({
         weights: weights.map(w => w.value),
         recipe: recipe.map(r => ({ name: r.name, ratio: r.ratio })),
-        calcMode,
-        revPowder,
-        revRatio,
-        revWeight,
-        revAmount,
         entryValue,
         savedAt: Date.now(),
       })
@@ -258,7 +229,7 @@ function App() {
         window.clearTimeout(saveDraftTimerRef.current)
       }
     }
-  }, [weights, recipe, calcMode, revPowder, revRatio, revWeight, revAmount, entryValue])
+  }, [weights, recipe, entryValue])
 
   const getVoice = useCallback((): SpeechSynthesisVoice | null => {
     if (voices.length === 0) return null
@@ -336,30 +307,6 @@ function App() {
     setRecipe(prev => prev.map(r => r.id === id ? { ...r, name: value } : r))
   }, [])
 
-  const handleRevPowderChange = useCallback((value: string) => {
-    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
-    handleInput(value)
-    setRevPowder(value)
-  }, [handleInput])
-
-  const handleRevRatioChange = useCallback((value: string) => {
-    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
-    handleInput(value)
-    setRevRatio(value)
-  }, [handleInput])
-
-  const handleRevWeightChange = useCallback((value: string) => {
-    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
-    handleInput(value)
-    setRevWeight(value)
-  }, [handleInput])
-
-  const handleRevAmountChange = useCallback((value: string) => {
-    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
-    handleInput(value)
-    setRevAmount(value)
-  }, [handleInput])
-
   const savePreset = useCallback(() => {
     const ratios = recipe.filter(r => (parseFloat(r.ratio) || 0) > 0)
     if (ratios.length === 0) {
@@ -388,7 +335,6 @@ function App() {
     }))
     setRecipe(entries)
     nextRecipeIdRef.current = entries.length + 1
-    setCalcMode('forward')
   }, [])
 
   const deletePreset = useCallback((id: string) => {
@@ -419,11 +365,6 @@ function App() {
     nextIdRef.current = 1
     setRecipe([{ id: 1, name: '', ratio: '' }])
     nextRecipeIdRef.current = 2
-    setCalcMode('forward')
-    setRevPowder('')
-    setRevRatio('')
-    setRevWeight('')
-    setRevAmount('')
     clearDraft()
   }, [])
 
@@ -482,9 +423,9 @@ function App() {
     persistRecord(record)
   }, [filledCount, buildRecord, persistRecord])
 
-  // 自动保存历史记录（防抖）：正向配比有有效结果时自动存档
+  // 自动保存历史记录（防抖）：配比有有效结果时自动存档
   useEffect(() => {
-    if (calcMode !== 'forward' || totalWeightRaw <= 0 || !hasAnyRatio) return
+    if (totalWeightRaw <= 0 || !hasAnyRatio) return
     if (saveHistoryTimerRef.current !== null) {
       window.clearTimeout(saveHistoryTimerRef.current)
     }
@@ -499,7 +440,7 @@ function App() {
         window.clearTimeout(saveHistoryTimerRef.current)
       }
     }
-  }, [calcMode, totalWeightRaw, hasAnyRatio, buildRecord, persistRecord])
+  }, [totalWeightRaw, hasAnyRatio, buildRecord, persistRecord])
 
   const loadRecord = useCallback((record: HistoryRecord) => {
     // 钳制到 maxRows，避免行数超出上限，并过滤空值
@@ -684,8 +625,7 @@ function App() {
         </div>
       </div>
 
-      {/* Weight Entry - 仅正向配比模式：单输入框 + 回车记录，下方列出已记录数据 */}
-      {calcMode === 'forward' && (
+      {/* Weight Entry：单输入框 + 回车记录，下方列出已记录数据 */}
       <div className="card">
         <div className="card-title">
           <span className="card-title-icon">📦</span>
@@ -731,132 +671,23 @@ function App() {
           <div className="empty-hint">输入重量后按回车记录，录入数据将自动累加为总重量</div>
         )}
       </div>
-      )}
 
-      {/* 计算方式切换 - 紧凑 segmented control */}
-      <div className="mode-toggle-group mode-toggle-card">
-        <button className={`mode-btn ${calcMode === 'forward' ? 'mode-btn-active' : ''}`}
-          onClick={() => setCalcMode('forward')}>色粉配比</button>
-        <button className={`mode-btn ${calcMode === 'reverseWeight' ? 'mode-btn-active' : ''}`}
-          onClick={() => setCalcMode('reverseWeight')}>求总重量</button>
-        <button className={`mode-btn ${calcMode === 'reverseRatio' ? 'mode-btn-active' : ''}`}
-          onClick={() => setCalcMode('reverseRatio')}>求比例</button>
+      {/* Total Weight Card */}
+      <div className="total-card">
+        <div className="card-title">
+          <span className="card-title-icon">📊</span>
+          总重量
+        </div>
+        <div>
+          <span key={totalWeightRaw} className="total-value">{totalWeightRaw.toFixed(settings.decimalPlaces)}</span>
+          <span className="total-unit">{settings.weightUnit}</span>
+        </div>
+        <div className="total-detail">
+          已录入 {filledCount} 次
+        </div>
       </div>
 
-      {/* Total Weight Card - 仅正向配比模式 */}
-      {calcMode === 'forward' && (
-        <div className="total-card">
-          <div className="card-title">
-            <span className="card-title-icon">📊</span>
-            总重量
-          </div>
-          <div>
-            <span key={totalWeightRaw} className="total-value">{totalWeightRaw.toFixed(settings.decimalPlaces)}</span>
-            <span className="total-unit">{settings.weightUnit}</span>
-          </div>
-          <div className="total-detail">
-            已录入 {filledCount} 次
-          </div>
-        </div>
-      )}
-
-      {/* 反算总重量 */}
-      {calcMode === 'reverseWeight' && (
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">🎯</span>
-            反算总重量
-          </div>
-          <div className="ratio-section">
-            <div className="ratio-input-row">
-              <span className="ratio-label">色粉量</span>
-              <div className="ratio-input-wrap">
-                <input type="text" inputMode="decimal" className="ratio-input"
-                  placeholder="输入色粉添加量" value={revPowder}
-                  onChange={e => handleRevPowderChange(e.target.value)} />
-                <span className="ratio-unit">{settings.resultUnit}</span>
-              </div>
-            </div>
-            <div className="ratio-input-row">
-              <span className="ratio-label">添加比例</span>
-              <div className="ratio-input-wrap">
-                <input type="text" inputMode="decimal" className="ratio-input"
-                  placeholder="输入比例" value={revRatio}
-                  onChange={e => handleRevRatioChange(e.target.value)} />
-                <span className="ratio-unit">{settings.ratioUnit}</span>
-              </div>
-            </div>
-            <div className="reverse-hint">已知色粉添加量和比例，计算所需总重量</div>
-          </div>
-        </div>
-      )}
-
-      {/* 反算比例 */}
-      {calcMode === 'reverseRatio' && (
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">🎯</span>
-            反算比例
-          </div>
-          <div className="ratio-section">
-            <div className="ratio-input-row">
-              <span className="ratio-label">总重量</span>
-              <div className="ratio-input-wrap">
-                <input type="text" inputMode="decimal" className="ratio-input"
-                  placeholder="输入总重量" value={revWeight}
-                  onChange={e => handleRevWeightChange(e.target.value)} />
-                <span className="ratio-unit">{settings.weightUnit}</span>
-              </div>
-            </div>
-            <div className="ratio-input-row">
-              <span className="ratio-label">色粉量</span>
-              <div className="ratio-input-wrap">
-                <input type="text" inputMode="decimal" className="ratio-input"
-                  placeholder="输入色粉添加量" value={revAmount}
-                  onChange={e => handleRevAmountChange(e.target.value)} />
-                <span className="ratio-unit">{settings.resultUnit}</span>
-              </div>
-            </div>
-            <div className="reverse-hint">已知总重量和色粉添加量，计算添加比例</div>
-          </div>
-        </div>
-      )}
-
-      {/* 反向结果 */}
-      {calcMode === 'reverseWeight' && reverseWeightResult !== null && reverseWeightResult > 0 && (
-        <div className="result-card">
-          <div className="card-title">
-            <span className="card-title-icon">✅</span>
-            所需总重量
-          </div>
-          <div>
-            <span className="result-value">{reverseWeightResult.toFixed(settings.decimalPlaces)}</span>
-            <span className="result-unit">{settings.weightUnit}</span>
-          </div>
-          <div className="result-formula">
-            {revPowder} {settings.resultUnit} ÷ {revRatio} {settings.ratioUnit} = {reverseWeightResult.toFixed(settings.decimalPlaces)} {settings.weightUnit}
-          </div>
-        </div>
-      )}
-      {calcMode === 'reverseRatio' && reverseRatioResult !== null && reverseRatioResult > 0 && (
-        <div className="result-card">
-          <div className="card-title">
-            <span className="card-title-icon">✅</span>
-            添加比例
-          </div>
-          <div>
-            <span className="result-value">{parseFloat(reverseRatioResult.toFixed(3))}</span>
-            <span className="result-unit">{settings.ratioUnit}</span>
-          </div>
-          <div className="result-formula">
-            {revAmount} {settings.resultUnit} ÷ {revWeight} {settings.weightUnit} = {parseFloat(reverseRatioResult.toFixed(3))} {settings.ratioUnit}
-          </div>
-        </div>
-      )}
-
       {/* Ratio Input Card */}
-      {calcMode === 'forward' && (
-      <>
       <div className="card">
         <div className="card-title">
           <span className="card-title-icon">🎨</span>
@@ -940,16 +771,12 @@ function App() {
         </div>
       )}
       <div className="auto-save-hint">💾 结果有效时会自动保存到历史记录（输入停止后 1 秒）</div>
-      </>
-      )}
 
       {/* Action Buttons */}
       <div className="actions">
-        {calcMode === 'forward' && (
-          <button className="btn btn-primary" onClick={saveRecord} disabled={filledCount === 0}>
-            💾 保存记录
-          </button>
-        )}
+        <button className="btn btn-primary" onClick={saveRecord} disabled={filledCount === 0}>
+          💾 保存记录
+        </button>
         <button className="btn btn-outline" onClick={resetAll}>
           重置数据
         </button>
