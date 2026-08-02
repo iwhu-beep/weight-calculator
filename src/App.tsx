@@ -33,9 +33,23 @@ interface RecipeEntry {
   ratio: string
 }
 
+interface RecipePreset {
+  id: string
+  name: string
+  recipe: { name: string; ratio: number }[]
+  createdAt: number
+}
+
+type CalcMode = 'forward' | 'reverseWeight' | 'reverseRatio'
+
 interface Draft {
   weights: string[]
   recipe: { name: string; ratio: string }[]
+  calcMode?: CalcMode
+  revPowder?: string
+  revRatio?: string
+  revWeight?: string
+  revAmount?: string
   savedAt: number
 }
 
@@ -143,6 +157,71 @@ function saveHistory(records: HistoryRecord[]) {
 function newHistoryId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function loadPresets(): RecipePreset[] {
+  try {
+    const saved = localStorage.getItem('wc_presets')
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed)) {
+        return parsed.filter(p => p && typeof p.id === 'string' && typeof p.name === 'string' && Array.isArray(p.recipe))
+      }
+    }
+  } catch { /* ignore */ }
+  return []
+}
+
+function savePresets(presets: RecipePreset[]) {
+  localStorage.setItem('wc_presets', JSON.stringify(presets.slice(0, 20)))
+}
+
+/**
+ * 反算总重量：已知色粉添加量和比例，求所需总重量
+ * 总重量(kg) = 色粉量(g) / 比例(‰)
+ */
+function calcReverseWeight(
+  powderAmount: number,
+  ratioValue: number,
+  weightUnit: WeightUnit,
+  ratioUnit: RatioUnit,
+  resultUnit: ResultUnit,
+): number {
+  // 色粉量统一转 g
+  let amountG = powderAmount
+  if (resultUnit === 'mg') amountG = powderAmount / 1000
+  if (resultUnit === 'kg') amountG = powderAmount * 1000
+  // 比例统一转 ‰
+  let ratioPermille = ratioValue
+  if (ratioUnit === '%') ratioPermille = ratioValue * 10
+  // 总重量 kg
+  const weightKg = ratioPermille > 0 ? amountG / ratioPermille : 0
+  if (weightUnit === 'g') return weightKg * 1000
+  return weightKg
+}
+
+/**
+ * 反算比例：已知总重量和色粉添加量，求添加比例
+ * 比例(‰) = 色粉量(g) / 总重量(kg)
+ */
+function calcReverseRatio(
+  totalWeight: number,
+  powderAmount: number,
+  weightUnit: WeightUnit,
+  ratioUnit: RatioUnit,
+  resultUnit: ResultUnit,
+): number {
+  // 总重量统一转 kg
+  let weightKg = totalWeight
+  if (weightUnit === 'g') weightKg = totalWeight / 1000
+  // 色粉量统一转 g
+  let amountG = powderAmount
+  if (resultUnit === 'mg') amountG = powderAmount / 1000
+  if (resultUnit === 'kg') amountG = powderAmount * 1000
+  // 比例 ‰
+  const ratioPermille = weightKg > 0 ? amountG / weightKg : 0
+  if (ratioUnit === '%') return ratioPermille / 10
+  return ratioPermille
 }
 
 // 草稿自动保存 - 防止刷新/退出丢失已输入数据
@@ -286,6 +365,12 @@ function App() {
       ? initialDraft.recipe.map((r, i) => ({ id: i + 1, name: r.name, ratio: r.ratio }))
       : [{ id: 1, name: '', ratio: '' }]
   )
+  const [calcMode, setCalcMode] = useState<CalcMode>(initialDraft?.calcMode ?? 'forward')
+  const [revPowder, setRevPowder] = useState(initialDraft?.revPowder ?? '')
+  const [revRatio, setRevRatio] = useState(initialDraft?.revRatio ?? '')
+  const [revWeight, setRevWeight] = useState(initialDraft?.revWeight ?? '')
+  const [revAmount, setRevAmount] = useState(initialDraft?.revAmount ?? '')
+  const [presets, setPresets] = useState<RecipePreset[]>(loadPresets)
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voicesLoaded, setVoicesLoaded] = useState(false)
@@ -298,6 +383,8 @@ function App() {
   const recipeRatioInputRefs = useRef<(HTMLInputElement | null)[]>([])
   const historyRef = useRef<HistoryRecord[]>(history)
   historyRef.current = history
+  const presetsRef = useRef<RecipePreset[]>(presets)
+  presetsRef.current = presets
 
   // 屏幕常亮 - 优先使用 Capacitor KeepAwake，其次 Wake Lock API
   useEffect(() => {
@@ -371,6 +458,18 @@ function App() {
   const hasAnyRatio = powderResults.some(p => p.ratio > 0)
   const totalPowderAmount = powderResults.reduce((s, p) => s + p.amount, 0)
 
+  // 反向计算结果
+  const revPowderNum = parseFloat(revPowder) || 0
+  const revRatioNum = parseFloat(revRatio) || 0
+  const revWeightNum = parseFloat(revWeight) || 0
+  const revAmountNum = parseFloat(revAmount) || 0
+  const reverseWeightResult = revPowderNum > 0 && revRatioNum > 0
+    ? calcReverseWeight(revPowderNum, revRatioNum, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
+    : null
+  const reverseRatioResult = revWeightNum > 0 && revAmountNum > 0
+    ? calcReverseRatio(revWeightNum, revAmountNum, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
+    : null
+
   // 加载语音列表 - 仅中文
   useEffect(() => {
     const loadVoices = () => {
@@ -427,6 +526,11 @@ function App() {
       saveDraft({
         weights: weights.map(w => w.value),
         recipe: recipe.map(r => ({ name: r.name, ratio: r.ratio })),
+        calcMode,
+        revPowder,
+        revRatio,
+        revWeight,
+        revAmount,
         savedAt: Date.now(),
       })
       saveDraftTimerRef.current = null
@@ -436,7 +540,7 @@ function App() {
         window.clearTimeout(saveDraftTimerRef.current)
       }
     }
-  }, [weights, recipe])
+  }, [weights, recipe, calcMode, revPowder, revRatio, revWeight, revAmount])
 
   const getVoice = useCallback((): SpeechSynthesisVoice | null => {
     if (voices.length === 0) return null
@@ -507,6 +611,68 @@ function App() {
     setRecipe(prev => prev.map(r => r.id === id ? { ...r, name: value } : r))
   }, [])
 
+  const handleRevPowderChange = useCallback((value: string) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
+    handleInput(value)
+    setRevPowder(value)
+  }, [handleInput])
+
+  const handleRevRatioChange = useCallback((value: string) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
+    handleInput(value)
+    setRevRatio(value)
+  }, [handleInput])
+
+  const handleRevWeightChange = useCallback((value: string) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
+    handleInput(value)
+    setRevWeight(value)
+  }, [handleInput])
+
+  const handleRevAmountChange = useCallback((value: string) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
+    handleInput(value)
+    setRevAmount(value)
+  }, [handleInput])
+
+  const savePreset = useCallback(() => {
+    const ratios = recipe.filter(r => (parseFloat(r.ratio) || 0) > 0)
+    if (ratios.length === 0) {
+      window.alert('请先输入至少一个色粉比例')
+      return
+    }
+    const inputName = window.prompt('请输入配方名称', '')?.trim()
+    if (inputName === null) return
+    const name = inputName || `配方 ${presetsRef.current.length + 1}`
+    const preset: RecipePreset = {
+      id: newHistoryId(),
+      name,
+      recipe: ratios.map(r => ({ name: r.name.trim(), ratio: parseFloat(r.ratio) || 0 })),
+      createdAt: Date.now(),
+    }
+    const newPresets = [preset, ...presetsRef.current]
+    setPresets(newPresets)
+    savePresets(newPresets)
+  }, [recipe])
+
+  const applyPreset = useCallback((preset: RecipePreset) => {
+    const entries: RecipeEntry[] = preset.recipe.map((r, i) => ({
+      id: i + 1,
+      name: r.name,
+      ratio: r.ratio > 0 ? r.ratio.toString() : '',
+    }))
+    setRecipe(entries)
+    nextRecipeIdRef.current = entries.length + 1
+    setCalcMode('forward')
+  }, [])
+
+  const deletePreset = useCallback((id: string) => {
+    if (!window.confirm('确定删除这个配方预设吗？')) return
+    const newPresets = presetsRef.current.filter(p => p.id !== id)
+    setPresets(newPresets)
+    savePresets(newPresets)
+  }, [])
+
   const addRecipeRow = useCallback(() => {
     if (recipe.length >= MAX_RECIPE_ROWS) return
     const id = nextRecipeIdRef.current++
@@ -534,6 +700,11 @@ function App() {
     nextIdRef.current = settings.initialRows + 1
     setRecipe([{ id: 1, name: '', ratio: '' }])
     nextRecipeIdRef.current = 2
+    setCalcMode('forward')
+    setRevPowder('')
+    setRevRatio('')
+    setRevWeight('')
+    setRevAmount('')
     clearDraft()
   }, [settings.initialRows])
 
@@ -963,11 +1134,142 @@ function App() {
         </div>
       </div>
 
+      {/* 计算方式切换 */}
+      <div className="card">
+        <div className="card-title">
+          <span className="card-title-icon">🧮</span>
+          计算方式
+        </div>
+        <div className="mode-toggle-group">
+          <button className={`mode-btn ${calcMode === 'forward' ? 'mode-btn-active' : ''}`}
+            onClick={() => setCalcMode('forward')}>色粉配比</button>
+          <button className={`mode-btn ${calcMode === 'reverseWeight' ? 'mode-btn-active' : ''}`}
+            onClick={() => setCalcMode('reverseWeight')}>求总重量</button>
+          <button className={`mode-btn ${calcMode === 'reverseRatio' ? 'mode-btn-active' : ''}`}
+            onClick={() => setCalcMode('reverseRatio')}>求比例</button>
+        </div>
+      </div>
+
+      {/* 反算总重量 */}
+      {calcMode === 'reverseWeight' && (
+        <div className="card">
+          <div className="card-title">
+            <span className="card-title-icon">🎯</span>
+            反算总重量
+          </div>
+          <div className="ratio-section">
+            <div className="ratio-input-row">
+              <span className="ratio-label">色粉量</span>
+              <div className="ratio-input-wrap">
+                <input type="text" inputMode="decimal" className="ratio-input"
+                  placeholder="输入色粉添加量" value={revPowder}
+                  onChange={e => handleRevPowderChange(e.target.value)} />
+                <span className="ratio-unit">{settings.resultUnit}</span>
+              </div>
+            </div>
+            <div className="ratio-input-row">
+              <span className="ratio-label">添加比例</span>
+              <div className="ratio-input-wrap">
+                <input type="text" inputMode="decimal" className="ratio-input"
+                  placeholder="输入比例" value={revRatio}
+                  onChange={e => handleRevRatioChange(e.target.value)} />
+                <span className="ratio-unit">{settings.ratioUnit}</span>
+              </div>
+            </div>
+            <div className="reverse-hint">已知色粉添加量和比例，计算所需总重量</div>
+          </div>
+        </div>
+      )}
+
+      {/* 反算比例 */}
+      {calcMode === 'reverseRatio' && (
+        <div className="card">
+          <div className="card-title">
+            <span className="card-title-icon">🎯</span>
+            反算比例
+          </div>
+          <div className="ratio-section">
+            <div className="ratio-input-row">
+              <span className="ratio-label">总重量</span>
+              <div className="ratio-input-wrap">
+                <input type="text" inputMode="decimal" className="ratio-input"
+                  placeholder="输入总重量" value={revWeight}
+                  onChange={e => handleRevWeightChange(e.target.value)} />
+                <span className="ratio-unit">{settings.weightUnit}</span>
+              </div>
+            </div>
+            <div className="ratio-input-row">
+              <span className="ratio-label">色粉量</span>
+              <div className="ratio-input-wrap">
+                <input type="text" inputMode="decimal" className="ratio-input"
+                  placeholder="输入色粉添加量" value={revAmount}
+                  onChange={e => handleRevAmountChange(e.target.value)} />
+                <span className="ratio-unit">{settings.resultUnit}</span>
+              </div>
+            </div>
+            <div className="reverse-hint">已知总重量和色粉添加量，计算添加比例</div>
+          </div>
+        </div>
+      )}
+
+      {/* 反向结果 */}
+      {calcMode === 'reverseWeight' && reverseWeightResult !== null && reverseWeightResult > 0 && (
+        <div className="result-card">
+          <div className="card-title">
+            <span className="card-title-icon">✅</span>
+            所需总重量
+          </div>
+          <div>
+            <span className="result-value">{reverseWeightResult.toFixed(settings.decimalPlaces)}</span>
+            <span className="result-unit">{settings.weightUnit}</span>
+          </div>
+          <div className="result-formula">
+            {revPowder} {settings.resultUnit} ÷ {revRatio} {settings.ratioUnit} = {reverseWeightResult.toFixed(settings.decimalPlaces)} {settings.weightUnit}
+          </div>
+        </div>
+      )}
+      {calcMode === 'reverseRatio' && reverseRatioResult !== null && reverseRatioResult > 0 && (
+        <div className="result-card">
+          <div className="card-title">
+            <span className="card-title-icon">✅</span>
+            添加比例
+          </div>
+          <div>
+            <span className="result-value">{parseFloat(reverseRatioResult.toFixed(3))}</span>
+            <span className="result-unit">{settings.ratioUnit}</span>
+          </div>
+          <div className="result-formula">
+            {revAmount} {settings.resultUnit} ÷ {revWeight} {settings.weightUnit} = {parseFloat(reverseRatioResult.toFixed(3))} {settings.ratioUnit}
+          </div>
+        </div>
+      )}
+
       {/* Ratio Input Card */}
+      {calcMode === 'forward' && (
+      <>
       <div className="card">
         <div className="card-title">
           <span className="card-title-icon">🎨</span>
           色粉配比
+        </div>
+        <div className="preset-section">
+          <div className="preset-header">
+            <span className="preset-title">配方预设</span>
+            <button className="preset-save-btn" onClick={savePreset}>💾 保存当前</button>
+          </div>
+          {presets.length === 0 ? (
+            <div className="preset-empty">暂无配方，可保存当前色粉配比</div>
+          ) : (
+            <div className="preset-list">
+              {presets.map(p => (
+                <div key={p.id} className="preset-chip" onClick={() => applyPreset(p)}>
+                  <span className="preset-name">{p.name}</span>
+                  <button className="preset-delete"
+                    onClick={e => { e.stopPropagation(); deletePreset(p.id) }} title="删除配方">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div className="ratio-section">
           {recipe.map((r, index) => (
@@ -1027,12 +1329,16 @@ function App() {
           </div>
         </div>
       )}
+      </>
+      )}
 
       {/* Action Buttons */}
       <div className="actions">
-        <button className="btn btn-primary" onClick={saveRecord} disabled={filledCount === 0}>
-          💾 保存记录
-        </button>
+        {calcMode === 'forward' && (
+          <button className="btn btn-primary" onClick={saveRecord} disabled={filledCount === 0}>
+            💾 保存记录
+          </button>
+        )}
         <button className="btn btn-outline" onClick={resetAll}>
           重置数据
         </button>

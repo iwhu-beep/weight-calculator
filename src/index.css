@@ -1002,3 +1002,132 @@ html, body {
   color: white;
   box-shadow: 0 1px 4px rgba(79,110,247,0.3);
 }
+
+/* ========== 计算方式切换 ========== */
+.mode-toggle-group {
+  display: flex;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 10px 0;
+  border: none;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.mode-btn:last-child {
+  border-right: none;
+}
+
+.mode-btn-active {
+  background: var(--primary);
+  color: white;
+}
+
+/* 反算提示 */
+.reverse-hint {
+  font-size: 12px;
+  color: var(--text-hint);
+  padding-top: 4px;
+}
+
+/* ========== 配方预设 ========== */
+.preset-section {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.preset-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.preset-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.preset-save-btn {
+  padding: 6px 12px;
+  border: 1.5px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: var(--primary-light);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.preset-save-btn:active {
+  background: var(--primary);
+  color: white;
+}
+
+.preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.preset-chip:active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
+.preset-delete {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-hint);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.preset-delete:active {
+  background: var(--danger);
+  color: white;
+}
+
+.preset-empty {
+  font-size: 12px;
+  color: var(--text-hint);
+}
