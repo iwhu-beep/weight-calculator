@@ -69,7 +69,10 @@ function loadSettings(): Settings {
     const saved = localStorage.getItem('wc_settings')
     if (saved) {
       const parsed = JSON.parse(saved)
-      return { ...DEFAULT_SETTINGS, ...parsed, voiceRate: parsed.voiceRate ?? 1.0 }
+      const merged: Settings = { ...DEFAULT_SETTINGS, ...parsed, voiceRate: parsed.voiceRate ?? 1.0 }
+      // 防御旧数据：initialRows 不能超过 maxRows
+      if (merged.initialRows > merged.maxRows) merged.initialRows = merged.maxRows
+      return merged
     }
   } catch { /* ignore */ }
   return { ...DEFAULT_SETTINGS }
@@ -330,7 +333,8 @@ function App() {
 
   const addRow = useCallback(() => {
     if (weights.length >= settings.maxRows) return
-    setWeights(prev => [...prev, { id: nextIdRef.current++, value: '' }])
+    const id = nextIdRef.current++
+    setWeights(prev => [...prev, { id, value: '' }])
   }, [weights.length, settings.maxRows])
 
   const removeRow = useCallback((id: number) => {
@@ -364,8 +368,10 @@ function App() {
   }, [weights, totalWeightRaw, ratioValue, colorPowderAmount, filledCount, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
 
   const loadRecord = useCallback((record: HistoryRecord) => {
-    setWeights(record.weights.map((v, i) => ({ id: i + 1, value: v })))
-    nextIdRef.current = record.weights.length + 1
+    // 钳制到 maxRows，避免行数超出上限
+    const rows = record.weights.slice(0, settings.maxRows).map((v, i) => ({ id: i + 1, value: v }))
+    setWeights(rows)
+    nextIdRef.current = rows.length + 1
     setRatio(record.ratio > 0 ? record.ratio.toString() : '')
     // 加载记录时也切换单位
     setSettings(prev => ({
@@ -375,7 +381,7 @@ function App() {
       resultUnit: (record.resultUnit as ResultUnit) || prev.resultUnit,
     }))
     setPage('home')
-  }, [])
+  }, [settings.maxRows])
 
   const deleteRecord = useCallback((id: string) => {
     const newHistory = historyRef.current.filter(r => r.id !== id)
@@ -492,8 +498,11 @@ function App() {
               <div className="setting-desc">允许添加的最大行数（5~50）</div>
             </div>
             <div className="stepper">
-              <button className="stepper-btn"
-                onClick={() => setSettings(prev => ({ ...prev, maxRows: Math.max(5, prev.maxRows - 5), initialRows: Math.min(prev.initialRows, Math.max(5, prev.maxRows - 5)) }))}>−</button>
+                <button className="stepper-btn"
+                  onClick={() => setSettings(prev => {
+                    const newMax = Math.max(5, prev.maxRows - 5)
+                    return { ...prev, maxRows: newMax, initialRows: Math.min(prev.initialRows, newMax) }
+                  })}>−</button>
               <span className="stepper-value">{settings.maxRows}</span>
               <button className="stepper-btn"
                 onClick={() => setSettings(prev => ({ ...prev, maxRows: Math.min(50, prev.maxRows + 5) }))}>+</button>
@@ -711,7 +720,9 @@ function App() {
           ))}
         </div>
         <button className="add-row-btn" onClick={addRow} disabled={weights.length >= settings.maxRows}>
-          + 添加一行（{weights.length}/{settings.maxRows}）
+          {weights.length >= settings.maxRows
+            ? `已达上限（${settings.maxRows} 行）`
+            : `+ 添加一行（${weights.length}/${settings.maxRows}）`}
         </button>
       </div>
 
