@@ -3,6 +3,8 @@ import type { KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Capacitor } from '@capacitor/core'
+import { Share } from '@capacitor/share'
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import pkg from '../package.json'
 
 interface WeightEntry {
@@ -881,18 +883,39 @@ function App() {
       }
       const json = JSON.stringify(data, null, 2)
       const filename = `weight-calculator-backup-${new Date().toISOString().slice(0, 10)}.json`
-      // 原生 App：复制到剪贴板并提示保存（WKWebView 无原生下载/分享面板，剪贴板最稳）
+      // 原生 App：写入临时文件后调起系统分享面板（iOS 选择「存储到文件」即可导出）
       if (Capacitor.isNativePlatform()) {
         try {
-          await navigator.clipboard.writeText(json)
-          window.alert('配置已复制到剪贴板，请粘贴保存为 ' + filename)
+          await Filesystem.writeFile({
+            path: filename,
+            data: json,
+            directory: Directory.Cache,
+            encoding: Encoding.UTF8,
+          })
+          const uriResult = await Filesystem.getUri({
+            directory: Directory.Cache,
+            path: filename,
+          })
+          await Share.share({
+            title: '称重色粉计算器备份',
+            files: [uriResult.uri],
+            dialogTitle: '导出配置备份',
+          })
           return
         } catch (err) {
-          console.warn('clipboard failed, fallback to download', err)
-          // 剪贴板不可用时降级为网页下载
+          console.warn('native share failed, fallback to clipboard', err)
+          // 原生分享不可用时降级为复制到剪贴板
         }
       }
-      // Web / 降级：触发文件下载
+      // 降级：复制 JSON 到剪贴板并提示保存
+      try {
+        await navigator.clipboard.writeText(json)
+        window.alert('配置已复制到剪贴板，请粘贴保存为 ' + filename)
+        return
+      } catch (err) {
+        console.warn('clipboard failed, fallback to download', err)
+      }
+      // 最终降级：网页下载
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -1177,7 +1200,7 @@ function App() {
           <div className="setting-row">
             <div>
               <div className="setting-label">导出备份</div>
-              <div className="setting-desc">App 内复制 JSON 到剪贴板，网页直接下载</div>
+              <div className="setting-desc">App 内调起系统分享面板导出文件，网页直接下载</div>
             </div>
           </div>
           <div className="backup-actions">
