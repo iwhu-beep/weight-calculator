@@ -18,6 +18,7 @@ interface RecipeItem {
 interface HistoryRecord {
   id: string
   date: string
+  savedAt?: number
   weights: string[]
   totalWeight: number
   recipe: RecipeItem[]
@@ -169,6 +170,21 @@ function recordSignature(r: HistoryRecord): string {
     r.ratioUnit,
     r.resultUnit,
   ])
+}
+
+// 同批次判定：单位一致、配方组合一致、且最新记录在 10 分钟窗口内
+const BATCH_WINDOW_MS = 10 * 60 * 1000
+function isSameBatch(latest: HistoryRecord, current: HistoryRecord): boolean {
+  if (
+    latest.weightUnit !== current.weightUnit ||
+    latest.ratioUnit !== current.ratioUnit ||
+    latest.resultUnit !== current.resultUnit
+  ) return false
+  const recipeSig = (r: RecipeItem[]) => r.map(p => `${p.name}|${p.ratio}`).join(',')
+  if (recipeSig(latest.recipe) !== recipeSig(current.recipe)) return false
+  const latestAt = latest.savedAt ?? 0
+  if (Date.now() - latestAt > BATCH_WINDOW_MS) return false
+  return true
 }
 
 function loadPresets(): RecipePreset[] {
@@ -735,6 +751,7 @@ function App() {
     return {
       id: newHistoryId(),
       date: new Date().toLocaleString('zh-CN'),
+      savedAt: Date.now(),
       weights: weights.map(w => w.value),
       totalWeight: totalWeightRaw,
       recipe: storedRecipe,
@@ -745,20 +762,37 @@ function App() {
     }
   }, [weights, totalWeightRaw, recipe, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
 
+  // 统一持久化入口：完全相同的记录跳过；同批次（配方/单位相同且在时间窗口内）更新最新一条；否则新增
+  const persistRecord = useCallback((record: HistoryRecord) => {
+    const latest = historyRef.current[0]
+    // 内容完全相同则跳过，避免与自动保存重复
+    if (latest && recordSignature(latest) === recordSignature(record)) return
+    if (latest && isSameBatch(latest, record)) {
+      // 同批次合并：保留原 id，刷新内容与时间
+      const merged: HistoryRecord = {
+        ...record,
+        id: latest.id,
+        savedAt: Date.now(),
+      }
+      const newHistory = [merged, ...historyRef.current.slice(1)].slice(0, 50)
+      setHistory(newHistory)
+      saveHistory(newHistory)
+      return
+    }
+    // 新批次：直接新增
+    const newHistory = [record, ...historyRef.current].slice(0, 50)
+    setHistory(newHistory)
+    saveHistory(newHistory)
+  }, [])
+
   const saveRecord = useCallback(() => {
     if (filledCount === 0) return
     const record = buildRecord()
     if (!record) return
-    // 去重：与最新一条内容完全相同则跳过，避免与自动保存重复
-    const latest = historyRef.current[0]
-    if (latest && recordSignature(latest) === recordSignature(record)) return
-    // 用 historyRef 读取最新记录，避免连续保存时 stale closure 丢失记录
-    const newHistory = [record, ...historyRef.current].slice(0, 50)
-    setHistory(newHistory)
-    saveHistory(newHistory)
-  }, [filledCount, buildRecord])
+    persistRecord(record)
+  }, [filledCount, buildRecord, persistRecord])
 
-  // 自动保存历史记录（防抖）：正向配比有有效结果且内容变化时自动存档
+  // 自动保存历史记录（防抖）：正向配比有有效结果时自动存档
   useEffect(() => {
     if (calcMode !== 'forward' || totalWeightRaw <= 0 || !hasAnyRatio) return
     if (saveHistoryTimerRef.current !== null) {
@@ -768,19 +802,14 @@ function App() {
       saveHistoryTimerRef.current = null
       const record = buildRecord()
       if (!record) return
-      // 去重：与最新一条内容完全相同则跳过，避免连续输入刷屏
-      const latest = historyRef.current[0]
-      if (latest && recordSignature(latest) === recordSignature(record)) return
-      const newHistory = [record, ...historyRef.current].slice(0, 50)
-      setHistory(newHistory)
-      saveHistory(newHistory)
+      persistRecord(record)
     }, 1000)
     return () => {
       if (saveHistoryTimerRef.current !== null) {
         window.clearTimeout(saveHistoryTimerRef.current)
       }
     }
-  }, [calcMode, totalWeightRaw, hasAnyRatio, buildRecord])
+  }, [calcMode, totalWeightRaw, hasAnyRatio, buildRecord, persistRecord])
 
   const loadRecord = useCallback((record: HistoryRecord) => {
     // 钳制到 maxRows，避免行数超出上限
