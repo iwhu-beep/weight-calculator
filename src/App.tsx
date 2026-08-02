@@ -653,17 +653,15 @@ function App() {
           )}
         </div>
         {weights.length > 0 ? (
-          <div className="weight-rows">
+          <div className="weight-grid">
             {weights.map((w, index) => (
-              <div key={w.id} className="weight-row weight-row-filled">
-                <span className="weight-label weight-label-filled">
-                  第{index + 1}次
-                </span>
-                <div className="weight-input-wrap">
-                  <span className="weight-value">{w.value}</span>
-                  <span className="weight-unit">{settings.weightUnit}</span>
+              <div key={w.id} className="weight-cell">
+                <span className="weight-cell-label">第{index + 1}次</span>
+                <div className="weight-cell-value-wrap">
+                  <span className="weight-cell-value">{w.value}</span>
+                  <span className="weight-cell-unit">{settings.weightUnit}</span>
                 </div>
-                <button className="remove-row-btn" onClick={() => removeRow(w.id)} title="删除此行">✕</button>
+                <button className="weight-cell-delete" onClick={() => removeRow(w.id)} title="删除此行">✕</button>
               </div>
             ))}
           </div>
