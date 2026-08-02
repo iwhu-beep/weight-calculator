@@ -3,8 +3,6 @@ import type { KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Capacitor } from '@capacitor/core'
-import { Share } from '@capacitor/share'
-import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import pkg from '../package.json'
 
 interface WeightEntry {
@@ -883,23 +881,18 @@ function App() {
       }
       const json = JSON.stringify(data, null, 2)
       const filename = `weight-calculator-backup-${new Date().toISOString().slice(0, 10)}.json`
-      // 原生 App：写入文件后通过系统分享面板导出
+      // 原生 App：复制到剪贴板并提示保存（WKWebView 无原生下载/分享面板，剪贴板最稳）
       if (Capacitor.isNativePlatform()) {
-        await Filesystem.writeFile({
-          path: filename,
-          data: json,
-          directory: Directory.Cache,
-          encoding: Encoding.UTF8,
-        })
-        const uri = (await Filesystem.getUri({ path: filename, directory: Directory.Cache })).uri
-        await Share.share({
-          title: '称重色粉计算器备份',
-          files: [uri],
-          dialogTitle: '导出配置备份',
-        })
-        return
+        try {
+          await navigator.clipboard.writeText(json)
+          window.alert('配置已复制到剪贴板，请粘贴保存为 ' + filename)
+          return
+        } catch (err) {
+          console.warn('clipboard failed, fallback to download', err)
+          // 剪贴板不可用时降级为网页下载
+        }
       }
-      // Web：触发文件下载
+      // Web / 降级：触发文件下载
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -1184,7 +1177,7 @@ function App() {
           <div className="setting-row">
             <div>
               <div className="setting-label">导出备份</div>
-              <div className="setting-desc">保存全部设置、历史记录与配方预设为 JSON 文件</div>
+              <div className="setting-desc">App 内复制 JSON 到剪贴板，网页直接下载</div>
             </div>
           </div>
           <div className="backup-actions">
