@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { FormEvent, KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
 import { Capacitor } from '@capacitor/core'
 import { Share } from '@capacitor/share'
@@ -297,14 +297,11 @@ function App() {
     weightInputRefs.current[0]?.focus()
   }, [entryValue, weights.length, settings.maxRows])
 
-  // 键盘快捷键：Enter 提交当前输入
-  const handleEntryKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter') return
+  // 表单提交：iOS 数字键盘 Done 键与网页回车都会触发 submit
+  const handleEntrySubmit = useCallback((e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (entryValue !== '' && weights.length < settings.maxRows) {
-      addWeightEntry()
-    }
-  }, [entryValue, weights.length, settings.maxRows, addWeightEntry])
+    addWeightEntry()
+  }, [addWeightEntry])
 
   const handleRecipeNameKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, index: number) => {
     if (e.key !== 'Enter') return
@@ -694,22 +691,21 @@ function App() {
           <span className="card-title-icon">📦</span>
           称重数据录入
         </div>
-        <div className="weight-entry-row">
+        <form className="weight-entry-row" onSubmit={handleEntrySubmit}>
           <div className="weight-input-wrap">
             <input type="text" inputMode="decimal"
               ref={el => { weightInputRefs.current[0] = el }}
               className={`weight-input weight-entry-input ${entryValue !== '' ? 'weight-input-filled' : ''}`}
               placeholder={`输入重量(${settings.weightUnit})后回车`}
               value={entryValue}
-              onChange={e => handleEntryChange(e.target.value)}
-              onKeyDown={handleEntryKeyDown} />
+              onChange={e => handleEntryChange(e.target.value)} />
             <span className="weight-unit">{settings.weightUnit}</span>
           </div>
-          <button className="btn btn-primary btn-sm weight-entry-btn"
-            onClick={addWeightEntry} disabled={entryValue === ''}>
+          <button type="submit" className="btn btn-primary btn-sm weight-entry-btn"
+            disabled={entryValue === ''}>
             记录
           </button>
-        </div>
+        </form>
         <div className="weight-list-meta">
           <span>已记录 {weights.length} / {settings.maxRows} 次</span>
           {weights.length > 0 && (
