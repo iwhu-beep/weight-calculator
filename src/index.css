@@ -364,6 +364,43 @@ html, body {
   gap: 10px;
 }
 
+/* 多色粉配比行 */
+.ratio-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ratio-row .ratio-label {
+  min-width: 48px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.ratio-name-input {
+  width: 88px;
+  flex-shrink: 0;
+  padding: 12px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg);
+  outline: none;
+  transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+
+.ratio-name-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.ratio-name-input::placeholder {
+  color: var(--text-hint);
+  font-size: 12px;
+}
+
 .ratio-label {
   font-size: 14px;
   font-weight: 600;
@@ -465,6 +502,58 @@ html, body {
   position: relative;
   z-index: 1;
   font-weight: 400;
+}
+
+/* 多色粉结果列表 */
+.result-list {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.result-powder-name {
+  flex: 1;
+  color: rgba(255,255,255,0.9);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-powder-ratio {
+  color: rgba(255,255,255,0.6);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.result-powder-amount {
+  font-weight: 800;
+  font-size: 17px;
+  min-width: 96px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.result-total {
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.25);
+  display: flex;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 15px;
 }
 
 /* ========== Action Buttons ========== */

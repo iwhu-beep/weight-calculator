@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
+import type { KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
+import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import pkg from '../package.json'
 
 interface WeightEntry {
@@ -7,16 +9,34 @@ interface WeightEntry {
   value: string
 }
 
+interface RecipeItem {
+  name: string
+  ratio: number
+  amount: number
+}
+
 interface HistoryRecord {
   id: string
   date: string
   weights: string[]
   totalWeight: number
-  ratio: number
-  colorPowderAmount: number
+  recipe: RecipeItem[]
+  totalPowderAmount: number
   weightUnit: string
   ratioUnit: string
   resultUnit: string
+}
+
+interface RecipeEntry {
+  id: number
+  name: string
+  ratio: string
+}
+
+interface Draft {
+  weights: string[]
+  recipe: { name: string; ratio: string }[]
+  savedAt: number
 }
 
 interface VoiceOption {
@@ -38,6 +58,7 @@ type ResultUnit = typeof RESULT_UNITS[number]
 
 interface Settings {
   soundEnabled: boolean
+  hapticEnabled: boolean
   voiceEnabled: boolean
   voiceIndex: number
   voiceRate: number
@@ -52,6 +73,7 @@ interface Settings {
 
 const DEFAULT_SETTINGS: Settings = {
   soundEnabled: true,
+  hapticEnabled: false,
   voiceEnabled: false,
   voiceIndex: 0,
   voiceRate: 1.0,
@@ -89,11 +111,25 @@ function loadHistory(): HistoryRecord[] {
       const parsed = JSON.parse(saved)
       // 过滤结构损坏的记录，避免渲染时崩溃
       if (Array.isArray(parsed)) {
-        return parsed.filter(r =>
-          r && typeof r === 'object' &&
-          typeof r.id === 'string' &&
-          Array.isArray(r.weights)
-        )
+        return parsed
+          .filter(r =>
+            r && typeof r === 'object' &&
+            typeof r.id === 'string' &&
+            Array.isArray(r.weights)
+          )
+          .map(r => {
+            // 旧版记录迁移：只有单个 ratio / colorPowderAmount
+            if (!Array.isArray((r as HistoryRecord).recipe)) {
+              const ratio = typeof (r as any).ratio === 'number' ? (r as any).ratio : 0
+              const amount = typeof (r as any).colorPowderAmount === 'number' ? (r as any).colorPowderAmount : 0
+              return {
+                ...r,
+                recipe: [{ name: '', ratio, amount }],
+                totalPowderAmount: amount,
+              } as HistoryRecord
+            }
+            return r as HistoryRecord
+          })
       }
     }
   } catch { /* ignore */ }
@@ -108,6 +144,30 @@ function newHistoryId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
+
+// 草稿自动保存 - 防止刷新/退出丢失已输入数据
+function loadDraft(): Draft | null {
+  try {
+    const saved = localStorage.getItem('wc_draft')
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (parsed && Array.isArray(parsed.weights) && Array.isArray(parsed.recipe)) {
+        return parsed as Draft
+      }
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
+function saveDraft(draft: Draft) {
+  localStorage.setItem('wc_draft', JSON.stringify(draft))
+}
+
+function clearDraft() {
+  localStorage.removeItem('wc_draft')
+}
+
+const MAX_RECIPE_ROWS = 10
 
 function createDefaultWeights(count: number): WeightEntry[] {
   return Array.from({ length: count }, (_, i) => ({ id: i + 1, value: '' }))
@@ -141,6 +201,13 @@ function playKeySound() {
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06)
     osc.start(ctx.currentTime)
     osc.stop(ctx.currentTime + 0.06)
+  } catch { /* ignore */ }
+}
+
+// 触觉反馈 - 依赖 Capacitor 原生插件，浏览器中自动忽略
+async function playHaptic() {
+  try {
+    await Haptics.impact({ style: ImpactStyle.Light })
   } catch { /* ignore */ }
 }
 
@@ -202,16 +269,33 @@ function App() {
     initialRef.current = loadSettings()
   }
   const initialSettings = initialRef.current
+  const initialDraftRef = useRef<Draft | null>(null)
+  if (initialDraftRef.current === null) {
+    initialDraftRef.current = loadDraft()
+  }
+  const initialDraft = initialDraftRef.current
   const [page, setPage] = useState<Page>('home')
   const [settings, setSettings] = useState<Settings>(initialSettings)
-  const [weights, setWeights] = useState<WeightEntry[]>(() => createDefaultWeights(initialSettings.initialRows))
-  const [ratio, setRatio] = useState('')
+  const [weights, setWeights] = useState<WeightEntry[]>(() =>
+    initialDraft
+      ? initialDraft.weights.slice(0, initialSettings.maxRows).map((v, i) => ({ id: i + 1, value: v }))
+      : createDefaultWeights(initialSettings.initialRows)
+  )
+  const [recipe, setRecipe] = useState<RecipeEntry[]>(() =>
+    initialDraft && initialDraft.recipe.length > 0
+      ? initialDraft.recipe.map((r, i) => ({ id: i + 1, name: r.name, ratio: r.ratio }))
+      : [{ id: 1, name: '', ratio: '' }]
+  )
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voicesLoaded, setVoicesLoaded] = useState(false)
-  const nextIdRef = useRef(initialSettings.initialRows + 1)
+  const nextIdRef = useRef(initialDraft ? initialDraft.weights.length + 1 : initialSettings.initialRows + 1)
+  const nextRecipeIdRef = useRef(initialDraft && initialDraft.recipe.length > 0 ? initialDraft.recipe.length + 1 : 2)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
   const voiceTimerRef = useRef<number | null>(null)
+  const saveDraftTimerRef = useRef<number | null>(null)
+  const weightInputRefs = useRef<(HTMLInputElement | null)[]>([])
+  const recipeRatioInputRefs = useRef<(HTMLInputElement | null)[]>([])
   const historyRef = useRef<HistoryRecord[]>(history)
   historyRef.current = history
 
@@ -274,8 +358,18 @@ function App() {
   // 原始输入值（按 weightUnit）
   const totalWeightRaw = weights.reduce((sum, w) => sum + (parseFloat(w.value) || 0), 0)
   const filledCount = weights.filter(w => w.value !== '').length
-  const ratioValue = parseFloat(ratio) || 0
-  const colorPowderAmount = calcColorPowder(totalWeightRaw, ratioValue, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
+  const powderResults = recipe.map(r => {
+    const ratioValue = parseFloat(r.ratio) || 0
+    return {
+      name: r.name.trim(),
+      ratio: ratioValue,
+      amount: ratioValue > 0
+        ? calcColorPowder(totalWeightRaw, ratioValue, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
+        : 0,
+    }
+  })
+  const hasAnyRatio = powderResults.some(p => p.ratio > 0)
+  const totalPowderAmount = powderResults.reduce((s, p) => s + p.amount, 0)
 
   // 加载语音列表 - 仅中文
   useEffect(() => {
@@ -324,6 +418,26 @@ function App() {
     }
   }, [settings.voiceEnabled])
 
+  // 自动保存草稿（防抖），输入变化 300ms 后写入 localStorage
+  useEffect(() => {
+    if (saveDraftTimerRef.current !== null) {
+      window.clearTimeout(saveDraftTimerRef.current)
+    }
+    saveDraftTimerRef.current = window.setTimeout(() => {
+      saveDraft({
+        weights: weights.map(w => w.value),
+        recipe: recipe.map(r => ({ name: r.name, ratio: r.ratio })),
+        savedAt: Date.now(),
+      })
+      saveDraftTimerRef.current = null
+    }, 300)
+    return () => {
+      if (saveDraftTimerRef.current !== null) {
+        window.clearTimeout(saveDraftTimerRef.current)
+      }
+    }
+  }, [weights, recipe])
+
   const getVoice = useCallback((): SpeechSynthesisVoice | null => {
     if (voices.length === 0) return null
     const idx = Math.min(settings.voiceIndex, voices.length - 1)
@@ -344,8 +458,38 @@ function App() {
 
   const handleInput = useCallback((value: string) => {
     if (settings.soundEnabled) playKeySound()
+    if (settings.hapticEnabled) void playHaptic()
     if (settings.voiceEnabled) speakDebounced(value)
-  }, [settings.soundEnabled, settings.voiceEnabled, speakDebounced])
+  }, [settings.soundEnabled, settings.hapticEnabled, settings.voiceEnabled, speakDebounced])
+
+  // 键盘快捷键：Enter 跳到下一个输入框，快速连续录入
+  const handleWeightKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, index: number) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    const next = weightInputRefs.current[index + 1]
+    if (next) {
+      next.focus()
+    } else if (recipeRatioInputRefs.current[0]) {
+      recipeRatioInputRefs.current[0].focus()
+    }
+  }, [])
+
+  const handleRecipeNameKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, index: number) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    recipeRatioInputRefs.current[index]?.focus()
+  }, [])
+
+  const handleRecipeRatioKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, index: number) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    const next = recipeRatioInputRefs.current[index + 1]
+    if (next) {
+      next.focus()
+    } else if (weightInputRefs.current[0]) {
+      weightInputRefs.current[0].focus()
+    }
+  }, [])
 
   const handleWeightChange = useCallback((id: number, value: string) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
@@ -353,11 +497,26 @@ function App() {
     setWeights(prev => prev.map(w => w.id === id ? { ...w, value } : w))
   }, [handleInput])
 
-  const handleRatioChange = useCallback((value: string) => {
+  const handleRecipeRatioChange = useCallback((id: number, value: string) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
     handleInput(value)
-    setRatio(value)
+    setRecipe(prev => prev.map(r => r.id === id ? { ...r, ratio: value } : r))
   }, [handleInput])
+
+  const handleRecipeNameChange = useCallback((id: number, value: string) => {
+    setRecipe(prev => prev.map(r => r.id === id ? { ...r, name: value } : r))
+  }, [])
+
+  const addRecipeRow = useCallback(() => {
+    if (recipe.length >= MAX_RECIPE_ROWS) return
+    const id = nextRecipeIdRef.current++
+    setRecipe(prev => [...prev, { id, name: '', ratio: '' }])
+  }, [recipe.length])
+
+  const removeRecipeRow = useCallback((id: number) => {
+    if (recipe.length <= 1) return
+    setRecipe(prev => prev.filter(r => r.id !== id))
+  }, [recipe.length])
 
   const addRow = useCallback(() => {
     if (weights.length >= settings.maxRows) return
@@ -373,18 +532,31 @@ function App() {
   const resetAll = useCallback(() => {
     setWeights(createDefaultWeights(settings.initialRows))
     nextIdRef.current = settings.initialRows + 1
-    setRatio('')
+    setRecipe([{ id: 1, name: '', ratio: '' }])
+    nextRecipeIdRef.current = 2
+    clearDraft()
   }, [settings.initialRows])
 
   const saveRecord = useCallback(() => {
     if (filledCount === 0) return
+    const storedRecipe = recipe
+      .filter(r => (parseFloat(r.ratio) || 0) > 0)
+      .map(r => {
+        const ratio = parseFloat(r.ratio) || 0
+        return {
+          name: r.name.trim(),
+          ratio,
+          amount: calcColorPowder(totalWeightRaw, ratio, settings.weightUnit, settings.ratioUnit, settings.resultUnit),
+        }
+      })
+    const totalAmount = storedRecipe.reduce((s, p) => s + p.amount, 0)
     const record: HistoryRecord = {
       id: newHistoryId(),
       date: new Date().toLocaleString('zh-CN'),
       weights: weights.map(w => w.value),
       totalWeight: totalWeightRaw,
-      ratio: ratioValue,
-      colorPowderAmount,
+      recipe: storedRecipe,
+      totalPowderAmount: totalAmount,
       weightUnit: settings.weightUnit,
       ratioUnit: settings.ratioUnit,
       resultUnit: settings.resultUnit,
@@ -393,14 +565,18 @@ function App() {
     const newHistory = [record, ...historyRef.current].slice(0, 50)
     setHistory(newHistory)
     saveHistory(newHistory)
-  }, [weights, totalWeightRaw, ratioValue, colorPowderAmount, filledCount, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
+  }, [weights, totalWeightRaw, recipe, filledCount, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
 
   const loadRecord = useCallback((record: HistoryRecord) => {
     // 钳制到 maxRows，避免行数超出上限
     const rows = record.weights.slice(0, settings.maxRows).map((v, i) => ({ id: i + 1, value: v }))
     setWeights(rows)
     nextIdRef.current = rows.length + 1
-    setRatio(record.ratio > 0 ? record.ratio.toString() : '')
+    const loadedRecipe: RecipeEntry[] = record.recipe.length > 0
+      ? record.recipe.map((p, i) => ({ id: i + 1, name: p.name, ratio: p.ratio > 0 ? p.ratio.toString() : '' }))
+      : [{ id: 1, name: '', ratio: '' }]
+    setRecipe(loadedRecipe)
+    nextRecipeIdRef.current = loadedRecipe.length + 1
     // 加载记录时也切换单位
     setSettings(prev => ({
       ...prev,
@@ -412,12 +588,17 @@ function App() {
   }, [settings.maxRows])
 
   const deleteRecord = useCallback((id: string) => {
+    if (!historyRef.current.some(r => r.id === id)) return
+    if (!window.confirm('确定删除这条记录吗？此操作不可恢复。')) return
     const newHistory = historyRef.current.filter(r => r.id !== id)
     setHistory(newHistory)
     saveHistory(newHistory)
   }, [])
 
   const clearHistory = useCallback(() => {
+    const count = historyRef.current.length
+    if (count === 0) return
+    if (!window.confirm(`确定清空全部 ${count} 条历史记录吗？此操作不可恢复。`)) return
     setHistory([])
     saveHistory([])
   }, [])
@@ -450,6 +631,17 @@ function App() {
             <label className="toggle">
               <input type="checkbox" checked={settings.soundEnabled}
                 onChange={e => setSettings(prev => ({ ...prev, soundEnabled: e.target.checked }))} />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+          <div className="setting-row">
+            <div>
+              <div className="setting-label">触觉反馈</div>
+              <div className="setting-desc">输入数字时马达震动反馈（需原生 App）</div>
+            </div>
+            <label className="toggle">
+              <input type="checkbox" checked={settings.hapticEnabled}
+                onChange={e => setSettings(prev => ({ ...prev, hapticEnabled: e.target.checked }))} />
               <span className="toggle-slider" />
             </label>
           </div>
@@ -679,16 +871,16 @@ function App() {
                     <span className="history-item-label">总重量</span>
                     <span className="history-item-value">{record.totalWeight.toFixed(settings.decimalPlaces)} {record.weightUnit || 'kg'}</span>
                   </div>
-                  {record.ratio > 0 && (
-                    <div className="history-item">
-                      <span className="history-item-label">添加比例</span>
-                      <span className="history-item-value">{record.ratio} {record.ratioUnit || '‰'}</span>
+                  {record.recipe.map((p, i) => (
+                    <div className="history-item" key={i}>
+                      <span className="history-item-label">{p.name || `色粉${i + 1}`}</span>
+                      <span className="history-item-value highlight">{p.amount.toFixed(1)} {record.resultUnit || 'g'}</span>
                     </div>
-                  )}
-                  {record.colorPowderAmount > 0 && (
+                  ))}
+                  {record.recipe.length > 1 && record.totalPowderAmount > 0 && (
                     <div className="history-item">
-                      <span className="history-item-label">色粉添加量</span>
-                      <span className="history-item-value highlight">{record.colorPowderAmount.toFixed(1)} {record.resultUnit || 'g'}</span>
+                      <span className="history-item-label">合计</span>
+                      <span className="history-item-value highlight">{record.totalPowderAmount.toFixed(1)} {record.resultUnit || 'g'}</span>
                     </div>
                   )}
                 </div>
@@ -735,10 +927,12 @@ function App() {
               </span>
               <div className="weight-input-wrap">
                 <input type="text" inputMode="decimal"
+                  ref={el => { weightInputRefs.current[index] = el }}
                   className={`weight-input ${w.value !== '' ? 'weight-input-filled' : ''}`}
                   placeholder={`输入重量(${settings.weightUnit})`}
                   value={w.value}
-                  onChange={e => handleWeightChange(w.id, e.target.value)} />
+                  onChange={e => handleWeightChange(w.id, e.target.value)}
+                  onKeyDown={e => handleWeightKeyDown(e, index)} />
                 <span className="weight-unit">{settings.weightUnit}</span>
               </div>
               {weights.length > 1 && (
@@ -773,18 +967,33 @@ function App() {
       <div className="card">
         <div className="card-title">
           <span className="card-title-icon">🎨</span>
-          色粉添加比例
+          色粉配比
         </div>
         <div className="ratio-section">
-          <div className="ratio-input-row">
-            <span className="ratio-label">添加比例</span>
-            <div className="ratio-input-wrap">
-              <input type="text" inputMode="decimal" className="ratio-input"
-                placeholder={`输入比例(${settings.ratioUnit})`}
-                value={ratio} onChange={e => handleRatioChange(e.target.value)} />
-              <span className="ratio-unit">{settings.ratioUnit}</span>
+          {recipe.map((r, index) => (
+            <div key={r.id} className="ratio-row">
+              <span className="ratio-label">色粉{index + 1}</span>
+              <input type="text" className="ratio-name-input"
+                placeholder="名称(可选)" maxLength={12}
+                value={r.name}
+                onChange={e => handleRecipeNameChange(r.id, e.target.value)}
+                onKeyDown={e => handleRecipeNameKeyDown(e, index)} />
+              <div className="ratio-input-wrap">
+                <input type="text" inputMode="decimal" className="ratio-input"
+                  ref={el => { recipeRatioInputRefs.current[index] = el }}
+                  placeholder="比例" value={r.ratio}
+                  onChange={e => handleRecipeRatioChange(r.id, e.target.value)}
+                  onKeyDown={e => handleRecipeRatioKeyDown(e, index)} />
+                <span className="ratio-unit">{settings.ratioUnit}</span>
+              </div>
+              {recipe.length > 1 && (
+                <button className="remove-row-btn" onClick={() => removeRecipeRow(r.id)} title="删除此色粉">✕</button>
+              )}
             </div>
-          </div>
+          ))}
+          <button className="add-row-btn" onClick={addRecipeRow} disabled={recipe.length >= MAX_RECIPE_ROWS}>
+            {recipe.length >= MAX_RECIPE_ROWS ? '已达上限（10 种色粉）' : '+ 添加色粉'}
+          </button>
           {totalWeightRaw === 0 && (
             <div className="empty-hint">请先输入称重数据</div>
           )}
@@ -792,18 +1001,29 @@ function App() {
       </div>
 
       {/* Result Card */}
-      {ratioValue > 0 && totalWeightRaw > 0 && (
+      {totalWeightRaw > 0 && hasAnyRatio && (
         <div className="result-card">
           <div className="card-title">
             <span className="card-title-icon">✅</span>
             色粉添加量
           </div>
-          <div>
-            <span className="result-value">{colorPowderAmount.toFixed(1)}</span>
-            <span className="result-unit">{settings.resultUnit}</span>
+          <div className="result-list">
+            {powderResults.filter(p => p.ratio > 0).map((p, i) => (
+              <div key={i} className="result-row">
+                <span className="result-powder-name">{p.name || `色粉${i + 1}`}</span>
+                <span className="result-powder-ratio">{p.ratio} {settings.ratioUnit}</span>
+                <span className="result-powder-amount">{p.amount.toFixed(1)} {settings.resultUnit}</span>
+              </div>
+            ))}
           </div>
+          {powderResults.filter(p => p.ratio > 0).length > 1 && (
+            <div className="result-total">
+              <span>合计</span>
+              <span>{totalPowderAmount.toFixed(1)} {settings.resultUnit}</span>
+            </div>
+          )}
           <div className="result-formula">
-            {totalWeightRaw.toFixed(settings.decimalPlaces)} {settings.weightUnit} × {ratioValue} {settings.ratioUnit} = {colorPowderAmount.toFixed(1)} {settings.resultUnit}
+            总重量 {totalWeightRaw.toFixed(settings.decimalPlaces)} {settings.weightUnit} · 共 {powderResults.filter(p => p.ratio > 0).length} 种色粉
           </div>
         </div>
       )}
