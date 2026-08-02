@@ -274,6 +274,11 @@ function App() {
     addWeightEntry()
   }, [addWeightEntry])
 
+  // 输入框失焦时记录：iOS 数字键盘 Done 键触发 blur 但不触发 submit
+  const handleEntryBlur = useCallback(() => {
+    if (entryValue !== '') addWeightEntry()
+  }, [entryValue, addWeightEntry])
+
   const handleRecipeNameKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>, index: number) => {
     if (e.key !== 'Enter') return
     e.preventDefault()
@@ -638,10 +643,12 @@ function App() {
               className={`weight-input weight-entry-input ${entryValue !== '' ? 'weight-input-filled' : ''}`}
               placeholder={`输入重量(${settings.weightUnit})后回车`}
               value={entryValue}
-              onChange={e => handleEntryChange(e.target.value)} />
+              onChange={e => handleEntryChange(e.target.value)}
+              onBlur={handleEntryBlur} />
             <span className="weight-unit">{settings.weightUnit}</span>
           </div>
           <button type="submit" className="btn btn-primary btn-sm weight-entry-btn"
+            onMouseDown={e => e.preventDefault()}
             disabled={entryValue === ''}>
             记录
           </button>
