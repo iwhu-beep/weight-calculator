@@ -2,6 +2,9 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
+import { Capacitor } from '@capacitor/core'
+import { Share } from '@capacitor/share'
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import pkg from '../package.json'
 
 interface WeightEntry {
@@ -868,22 +871,48 @@ function App() {
   }, [getVoice, settings.voiceRate])
 
   // 导出全部配置（设置、历史、配方预设）为 JSON 文件
-  const exportBackup = useCallback(() => {
-    const data = {
-      app: 'weight-calculator',
-      version: pkg.version,
-      exportedAt: new Date().toISOString(),
-      settings,
-      history: historyRef.current,
-      presets: presetsRef.current,
+  const exportBackup = useCallback(async () => {
+    try {
+      const data = {
+        app: 'weight-calculator',
+        version: pkg.version,
+        exportedAt: new Date().toISOString(),
+        settings,
+        history: historyRef.current,
+        presets: presetsRef.current,
+      }
+      const json = JSON.stringify(data, null, 2)
+      const filename = `weight-calculator-backup-${new Date().toISOString().slice(0, 10)}.json`
+      // 原生 App：写入文件后通过系统分享面板导出
+      if (Capacitor.isNativePlatform()) {
+        await Filesystem.writeFile({
+          path: filename,
+          data: json,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8,
+        })
+        const uri = (await Filesystem.getUri({ path: filename, directory: Directory.Cache })).uri
+        await Share.share({
+          title: '称重色粉计算器备份',
+          files: [uri],
+          dialogTitle: '导出配置备份',
+        })
+        return
+      }
+      // Web：触发文件下载
+      const blob = new Blob([json], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.rel = 'noopener'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      window.alert('导出失败，请重试')
     }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `weight-calculator-backup-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
   }, [settings])
 
   // 导入配置备份文件并覆盖当前数据
