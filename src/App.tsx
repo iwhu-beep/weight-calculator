@@ -159,6 +159,18 @@ function newHistoryId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+// 记录内容签名，用于自动保存去重：内容完全相同则不重复保存
+function recordSignature(r: HistoryRecord): string {
+  return JSON.stringify([
+    r.weights,
+    r.recipe.map(p => [p.name, p.ratio, p.amount]),
+    r.totalWeight,
+    r.weightUnit,
+    r.ratioUnit,
+    r.resultUnit,
+  ])
+}
+
 function loadPresets(): RecipePreset[] {
   try {
     const saved = localStorage.getItem('wc_presets')
@@ -379,6 +391,7 @@ function App() {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
   const voiceTimerRef = useRef<number | null>(null)
   const saveDraftTimerRef = useRef<number | null>(null)
+  const saveHistoryTimerRef = useRef<number | null>(null)
   const weightInputRefs = useRef<(HTMLInputElement | null)[]>([])
   const recipeRatioInputRefs = useRef<(HTMLInputElement | null)[]>([])
   const historyRef = useRef<HistoryRecord[]>(history)
@@ -708,8 +721,7 @@ function App() {
     clearDraft()
   }, [settings.initialRows])
 
-  const saveRecord = useCallback(() => {
-    if (filledCount === 0) return
+  const buildRecord = useCallback((): HistoryRecord | null => {
     const storedRecipe = recipe
       .filter(r => (parseFloat(r.ratio) || 0) > 0)
       .map(r => {
@@ -720,23 +732,55 @@ function App() {
           amount: calcColorPowder(totalWeightRaw, ratio, settings.weightUnit, settings.ratioUnit, settings.resultUnit),
         }
       })
-    const totalAmount = storedRecipe.reduce((s, p) => s + p.amount, 0)
-    const record: HistoryRecord = {
+    return {
       id: newHistoryId(),
       date: new Date().toLocaleString('zh-CN'),
       weights: weights.map(w => w.value),
       totalWeight: totalWeightRaw,
       recipe: storedRecipe,
-      totalPowderAmount: totalAmount,
+      totalPowderAmount: storedRecipe.reduce((s, p) => s + p.amount, 0),
       weightUnit: settings.weightUnit,
       ratioUnit: settings.ratioUnit,
       resultUnit: settings.resultUnit,
     }
+  }, [weights, totalWeightRaw, recipe, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
+
+  const saveRecord = useCallback(() => {
+    if (filledCount === 0) return
+    const record = buildRecord()
+    if (!record) return
+    // 去重：与最新一条内容完全相同则跳过，避免与自动保存重复
+    const latest = historyRef.current[0]
+    if (latest && recordSignature(latest) === recordSignature(record)) return
     // 用 historyRef 读取最新记录，避免连续保存时 stale closure 丢失记录
     const newHistory = [record, ...historyRef.current].slice(0, 50)
     setHistory(newHistory)
     saveHistory(newHistory)
-  }, [weights, totalWeightRaw, recipe, filledCount, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
+  }, [filledCount, buildRecord])
+
+  // 自动保存历史记录（防抖）：正向配比有有效结果且内容变化时自动存档
+  useEffect(() => {
+    if (calcMode !== 'forward' || totalWeightRaw <= 0 || !hasAnyRatio) return
+    if (saveHistoryTimerRef.current !== null) {
+      window.clearTimeout(saveHistoryTimerRef.current)
+    }
+    saveHistoryTimerRef.current = window.setTimeout(() => {
+      saveHistoryTimerRef.current = null
+      const record = buildRecord()
+      if (!record) return
+      // 去重：与最新一条内容完全相同则跳过，避免连续输入刷屏
+      const latest = historyRef.current[0]
+      if (latest && recordSignature(latest) === recordSignature(record)) return
+      const newHistory = [record, ...historyRef.current].slice(0, 50)
+      setHistory(newHistory)
+      saveHistory(newHistory)
+    }, 1000)
+    return () => {
+      if (saveHistoryTimerRef.current !== null) {
+        window.clearTimeout(saveHistoryTimerRef.current)
+      }
+    }
+  }, [calcMode, totalWeightRaw, hasAnyRatio, buildRecord])
 
   const loadRecord = useCallback((record: HistoryRecord) => {
     // 钳制到 maxRows，避免行数超出上限
@@ -1329,6 +1373,7 @@ function App() {
           </div>
         </div>
       )}
+      <div className="auto-save-hint">💾 结果有效时会自动保存到历史记录（输入停止后 1 秒）</div>
       </>
       )}
 

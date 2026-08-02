@@ -1041,6 +1041,14 @@ html, body {
   padding-top: 4px;
 }
 
+/* 自动保存提示 */
+.auto-save-hint {
+  font-size: 12px;
+  color: var(--text-hint);
+  text-align: center;
+  padding-top: 4px;
+}
+
 /* ========== 配方预设 ========== */
 .preset-section {
   margin-bottom: 14px;
