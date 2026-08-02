@@ -1,378 +1,48 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
-import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Capacitor } from '@capacitor/core'
 import { Share } from '@capacitor/share'
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
+import HistoryPage from './components/HistoryPage'
+import SettingsPage from './components/SettingsPage'
+import { DEFAULT_SETTINGS, MAX_RECIPE_ROWS } from './constants'
+import {
+  calcColorPowder,
+  calcReverseRatio,
+  calcReverseWeight,
+  createDefaultWeights,
+  isSameBatch,
+  recordSignature,
+} from './lib/calc'
+import { playHaptic, playKeySound, speakNumber } from './lib/media'
+import {
+  clearDraft,
+  loadDraft,
+  loadHistory,
+  loadPresets,
+  loadSettings,
+  newHistoryId,
+  saveDraft,
+  saveHistory,
+  savePresets,
+  saveSettings,
+} from './lib/storage'
+import type {
+  CalcMode,
+  Draft,
+  HistoryRecord,
+  Page,
+  RecipeEntry,
+  RecipePreset,
+  ResultUnit,
+  RatioUnit,
+  Settings,
+  VoiceOption,
+  WeightEntry,
+  WeightUnit,
+} from './types'
 import pkg from '../package.json'
-
-interface WeightEntry {
-  id: number
-  value: string
-}
-
-interface RecipeItem {
-  name: string
-  ratio: number
-  amount: number
-}
-
-interface HistoryRecord {
-  id: string
-  date: string
-  savedAt?: number
-  weights: string[]
-  totalWeight: number
-  recipe: RecipeItem[]
-  totalPowderAmount: number
-  weightUnit: string
-  ratioUnit: string
-  resultUnit: string
-}
-
-interface RecipeEntry {
-  id: number
-  name: string
-  ratio: string
-}
-
-interface RecipePreset {
-  id: string
-  name: string
-  recipe: { name: string; ratio: number }[]
-  createdAt: number
-}
-
-type CalcMode = 'forward' | 'reverseWeight' | 'reverseRatio'
-
-interface Draft {
-  weights: string[]
-  recipe: { name: string; ratio: string }[]
-  calcMode?: CalcMode
-  revPowder?: string
-  revRatio?: string
-  revWeight?: string
-  revAmount?: string
-  savedAt: number
-}
-
-interface VoiceOption {
-  voice: SpeechSynthesisVoice
-  label: string
-}
-
-// 重量单位选项
-const WEIGHT_UNITS = ['kg', 'g'] as const
-type WeightUnit = typeof WEIGHT_UNITS[number]
-
-// 比例单位选项
-const RATIO_UNITS = ['‰', '%'] as const
-type RatioUnit = typeof RATIO_UNITS[number]
-
-// 结果单位选项
-const RESULT_UNITS = ['g', 'mg', 'kg'] as const
-type ResultUnit = typeof RESULT_UNITS[number]
-
-interface Settings {
-  soundEnabled: boolean
-  hapticEnabled: boolean
-  voiceEnabled: boolean
-  voiceIndex: number
-  voiceRate: number
-  decimalPlaces: number
-  initialRows: number
-  maxRows: number
-  weightUnit: WeightUnit
-  ratioUnit: RatioUnit
-  resultUnit: ResultUnit
-  screenAlwaysOn: boolean
-  darkMode: 'system' | 'light' | 'dark'
-}
-
-const DEFAULT_SETTINGS: Settings = {
-  soundEnabled: true,
-  hapticEnabled: false,
-  voiceEnabled: false,
-  voiceIndex: 0,
-  voiceRate: 1.0,
-  decimalPlaces: 2,
-  initialRows: 10,
-  maxRows: 20,
-  weightUnit: 'kg',
-  ratioUnit: '‰',
-  resultUnit: 'g',
-  screenAlwaysOn: false,
-  darkMode: 'system',
-}
-
-function loadSettings(): Settings {
-  try {
-    const saved = localStorage.getItem('wc_settings')
-    if (saved) {
-      const parsed = JSON.parse(saved)
-      const merged: Settings = { ...DEFAULT_SETTINGS, ...parsed, voiceRate: parsed.voiceRate ?? 1.0 }
-      // 防御旧数据：initialRows 不能超过 maxRows
-      if (merged.initialRows > merged.maxRows) merged.initialRows = merged.maxRows
-      return merged
-    }
-  } catch { /* ignore */ }
-  return { ...DEFAULT_SETTINGS }
-}
-
-function saveSettings(s: Settings) {
-  localStorage.setItem('wc_settings', JSON.stringify(s))
-}
-
-function loadHistory(): HistoryRecord[] {
-  try {
-    const saved = localStorage.getItem('wc_history')
-    if (saved) {
-      const parsed = JSON.parse(saved)
-      // 过滤结构损坏的记录，避免渲染时崩溃
-      if (Array.isArray(parsed)) {
-        return parsed
-          .filter(r =>
-            r && typeof r === 'object' &&
-            typeof r.id === 'string' &&
-            Array.isArray(r.weights)
-          )
-          .map(r => {
-            // 旧版记录迁移：只有单个 ratio / colorPowderAmount
-            if (!Array.isArray((r as HistoryRecord).recipe)) {
-              const ratio = typeof (r as any).ratio === 'number' ? (r as any).ratio : 0
-              const amount = typeof (r as any).colorPowderAmount === 'number' ? (r as any).colorPowderAmount : 0
-              return {
-                ...r,
-                recipe: [{ name: '', ratio, amount }],
-                totalPowderAmount: amount,
-              } as HistoryRecord
-            }
-            return r as HistoryRecord
-          })
-      }
-    }
-  } catch { /* ignore */ }
-  return []
-}
-
-function saveHistory(records: HistoryRecord[]) {
-  localStorage.setItem('wc_history', JSON.stringify(records.slice(0, 50)))
-}
-
-function newHistoryId(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-// 记录内容签名，用于自动保存去重：内容完全相同则不重复保存
-function recordSignature(r: HistoryRecord): string {
-  return JSON.stringify([
-    r.weights,
-    r.recipe.map(p => [p.name, p.ratio, p.amount]),
-    r.totalWeight,
-    r.weightUnit,
-    r.ratioUnit,
-    r.resultUnit,
-  ])
-}
-
-// 同批次判定：单位一致、配方组合一致、且最新记录在 10 分钟窗口内
-const BATCH_WINDOW_MS = 10 * 60 * 1000
-function isSameBatch(latest: HistoryRecord, current: HistoryRecord): boolean {
-  if (
-    latest.weightUnit !== current.weightUnit ||
-    latest.ratioUnit !== current.ratioUnit ||
-    latest.resultUnit !== current.resultUnit
-  ) return false
-  const recipeSig = (r: RecipeItem[]) => r.map(p => `${p.name}|${p.ratio}`).join(',')
-  if (recipeSig(latest.recipe) !== recipeSig(current.recipe)) return false
-  const latestAt = latest.savedAt ?? 0
-  if (Date.now() - latestAt > BATCH_WINDOW_MS) return false
-  return true
-}
-
-function loadPresets(): RecipePreset[] {
-  try {
-    const saved = localStorage.getItem('wc_presets')
-    if (saved) {
-      const parsed = JSON.parse(saved)
-      if (Array.isArray(parsed)) {
-        return parsed.filter(p => p && typeof p.id === 'string' && typeof p.name === 'string' && Array.isArray(p.recipe))
-      }
-    }
-  } catch { /* ignore */ }
-  return []
-}
-
-function savePresets(presets: RecipePreset[]) {
-  localStorage.setItem('wc_presets', JSON.stringify(presets.slice(0, 20)))
-}
-
-/**
- * 反算总重量：已知色粉添加量和比例，求所需总重量
- * 总重量(kg) = 色粉量(g) / 比例(‰)
- */
-function calcReverseWeight(
-  powderAmount: number,
-  ratioValue: number,
-  weightUnit: WeightUnit,
-  ratioUnit: RatioUnit,
-  resultUnit: ResultUnit,
-): number {
-  // 色粉量统一转 g
-  let amountG = powderAmount
-  if (resultUnit === 'mg') amountG = powderAmount / 1000
-  if (resultUnit === 'kg') amountG = powderAmount * 1000
-  // 比例统一转 ‰
-  let ratioPermille = ratioValue
-  if (ratioUnit === '%') ratioPermille = ratioValue * 10
-  // 总重量 kg
-  const weightKg = ratioPermille > 0 ? amountG / ratioPermille : 0
-  if (weightUnit === 'g') return weightKg * 1000
-  return weightKg
-}
-
-/**
- * 反算比例：已知总重量和色粉添加量，求添加比例
- * 比例(‰) = 色粉量(g) / 总重量(kg)
- */
-function calcReverseRatio(
-  totalWeight: number,
-  powderAmount: number,
-  weightUnit: WeightUnit,
-  ratioUnit: RatioUnit,
-  resultUnit: ResultUnit,
-): number {
-  // 总重量统一转 kg
-  let weightKg = totalWeight
-  if (weightUnit === 'g') weightKg = totalWeight / 1000
-  // 色粉量统一转 g
-  let amountG = powderAmount
-  if (resultUnit === 'mg') amountG = powderAmount / 1000
-  if (resultUnit === 'kg') amountG = powderAmount * 1000
-  // 比例 ‰
-  const ratioPermille = weightKg > 0 ? amountG / weightKg : 0
-  if (ratioUnit === '%') return ratioPermille / 10
-  return ratioPermille
-}
-
-// 草稿自动保存 - 防止刷新/退出丢失已输入数据
-function loadDraft(): Draft | null {
-  try {
-    const saved = localStorage.getItem('wc_draft')
-    if (saved) {
-      const parsed = JSON.parse(saved)
-      if (parsed && Array.isArray(parsed.weights) && Array.isArray(parsed.recipe)) {
-        return parsed as Draft
-      }
-    }
-  } catch { /* ignore */ }
-  return null
-}
-
-function saveDraft(draft: Draft) {
-  localStorage.setItem('wc_draft', JSON.stringify(draft))
-}
-
-function clearDraft() {
-  localStorage.removeItem('wc_draft')
-}
-
-const MAX_RECIPE_ROWS = 10
-
-function createDefaultWeights(count: number): WeightEntry[] {
-  return Array.from({ length: count }, (_, i) => ({ id: i + 1, value: '' }))
-}
-
-// 按键音 - 复用单例 AudioContext，避免每次按键都新建导致内存累积
-let audioCtx: AudioContext | null = null
-
-function getAudioCtx(): AudioContext | null {
-  try {
-    if (!audioCtx) audioCtx = new AudioContext()
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {})
-    }
-    return audioCtx
-  } catch { /* ignore */ }
-  return null
-}
-
-function playKeySound() {
-  const ctx = getAudioCtx()
-  if (!ctx) return
-  try {
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.frequency.value = 1200
-    osc.type = 'sine'
-    gain.gain.setValueAtTime(0.08, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + 0.06)
-  } catch { /* ignore */ }
-}
-
-// 触觉反馈 - 依赖 Capacitor 原生插件，浏览器中自动忽略
-async function playHaptic() {
-  try {
-    await Haptics.impact({ style: ImpactStyle.Light })
-  } catch { /* ignore */ }
-}
-
-// 语音读数
-function speakNumber(text: string, voice: SpeechSynthesisVoice | null, rate: number) {
-  try {
-    window.speechSynthesis.cancel()
-    const utter = new SpeechSynthesisUtterance(text)
-    if (voice) utter.voice = voice
-    utter.lang = voice?.lang ?? 'zh-CN'
-    utter.rate = rate
-    utter.pitch = 1.0
-    window.speechSynthesis.speak(utter)
-  } catch { /* ignore */ }
-}
-
-/**
- * 计算色粉添加量
- * 用户输入的重量单位为 weightUnit，比例单位为 ratioUnit，结果单位为 resultUnit
- *
- * 核心公式（均基于 kg 和 ‰）：
- *   色粉添加量(g) = 总重量(kg) × 比例(‰)
- *
- * 单位换算后：
- *   - 重量 kg→g: ×1000;  g→kg: ÷1000
- *   - 比例 ‰→%: ÷10;  %→‰: ×10
- *   - 结果 g→mg: ×1000;  g→kg: ÷1000
- */
-function calcColorPowder(
-  totalWeight: number,
-  ratioValue: number,
-  weightUnit: WeightUnit,
-  ratioUnit: RatioUnit,
-  resultUnit: ResultUnit,
-): number {
-  // 先统一转成 kg
-  let weightKg = totalWeight
-  if (weightUnit === 'g') weightKg = totalWeight / 1000
-
-  // 先统一转成 ‰
-  let ratioPermille = ratioValue
-  if (ratioUnit === '%') ratioPermille = ratioValue * 10
-
-  // 色粉添加量(g) = 总重量(kg) × 比例(‰)
-  let resultG = weightKg * ratioPermille
-
-  // 转换到目标结果单位
-  if (resultUnit === 'mg') return resultG * 1000
-  if (resultUnit === 'kg') return resultG / 1000
-  return resultG // g
-}
-
-type Page = 'home' | 'settings' | 'history'
 
 function App() {
   // 惰性初始化，只读取一次 localStorage
@@ -968,336 +638,31 @@ function App() {
     reader.readAsText(file)
   }, [])
 
-  const backupFileRef = useRef<HTMLInputElement | null>(null)
-
-  // 设置页面
   if (page === 'settings') {
     return (
-      <div className="app safe-top">
-        <div className="page-header">
-          <button className="back-btn" onClick={() => setPage('home')}>← 返回</button>
-          <h2>设置</h2>
-          <div style={{ width: 60 }} />
-        </div>
-
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">🔊</span>
-            声音与语音
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">按键声音</div>
-              <div className="setting-desc">输入数字时播放按键音效</div>
-            </div>
-            <label className="toggle">
-              <input type="checkbox" checked={settings.soundEnabled}
-                onChange={e => setSettings(prev => ({ ...prev, soundEnabled: e.target.checked }))} />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">触觉反馈</div>
-              <div className="setting-desc">输入数字时马达震动反馈（需原生 App）</div>
-            </div>
-            <label className="toggle">
-              <input type="checkbox" checked={settings.hapticEnabled}
-                onChange={e => setSettings(prev => ({ ...prev, hapticEnabled: e.target.checked }))} />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">语音读数</div>
-              <div className="setting-desc">输入数字时自动朗读数值</div>
-            </div>
-            <label className="toggle">
-              <input type="checkbox" checked={settings.voiceEnabled}
-                onChange={e => setSettings(prev => ({ ...prev, voiceEnabled: e.target.checked }))} />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-          {settings.voiceEnabled && (
-            <>
-              <div className="setting-row">
-                <div>
-                  <div className="setting-label">语音选择</div>
-                  <div className="setting-desc">选择中文朗读语音</div>
-                </div>
-              </div>
-              <div className="voice-select-wrap">
-                <select className="voice-select" value={settings.voiceIndex}
-                  onChange={e => setSettings(prev => ({ ...prev, voiceIndex: parseInt(e.target.value) }))}>
-                  {!voicesLoaded && <option value={0}>加载中...</option>}
-                  {voicesLoaded && voices.length === 0 && <option value={0}>无可用中文语音</option>}
-                  {voices.map((v, i) => (
-                    <option key={i} value={i}>{v.label}</option>
-                  ))}
-                </select>
-                <button className="btn-test-voice" onClick={testVoice}>🔊 试听</button>
-              </div>
-              <div className="setting-row">
-                <div>
-                  <div className="setting-label">语速</div>
-                  <div className="setting-desc">
-                    {settings.voiceRate <= 0.5 ? '慢速' : settings.voiceRate <= 0.75 ? '较慢' : settings.voiceRate <= 1.0 ? '正常' : settings.voiceRate <= 1.5 ? '较快' : '快速'}
-                  </div>
-                </div>
-                <div className="stepper">
-                  <button className="stepper-btn"
-                    onClick={() => setSettings(prev => ({ ...prev, voiceRate: Math.max(0.5, +(prev.voiceRate - 0.25).toFixed(2)) }))}>−</button>
-                  <span className="stepper-value">{settings.voiceRate}x</span>
-                  <button className="stepper-btn"
-                    onClick={() => setSettings(prev => ({ ...prev, voiceRate: Math.min(2.0, +(prev.voiceRate + 0.25).toFixed(2)) }))}>+</button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">🎨</span>
-            外观设置
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">深色模式</div>
-              <div className="setting-desc">跟随系统或手动切换明暗主题</div>
-            </div>
-            <div className="unit-toggle-group">
-              {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([key, label]) => (
-                <button key={key} className={`unit-btn ${settings.darkMode === key ? 'unit-btn-active' : ''}`}
-                  onClick={() => setSettings(prev => ({ ...prev, darkMode: key }))}>{label}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">📐</span>
-            输入设置
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">初始显示行数</div>
-              <div className="setting-desc">打开时默认显示的输入行数</div>
-            </div>
-            <div className="stepper">
-              <button className="stepper-btn"
-                onClick={() => setSettings(prev => ({ ...prev, initialRows: Math.max(1, prev.initialRows - 1) }))}>−</button>
-              <span className="stepper-value">{settings.initialRows}</span>
-              <button className="stepper-btn"
-                onClick={() => setSettings(prev => ({ ...prev, initialRows: Math.min(prev.maxRows, prev.initialRows + 1) }))}>+</button>
-            </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">最大输入行数</div>
-              <div className="setting-desc">允许添加的最大行数（5~50）</div>
-            </div>
-            <div className="stepper">
-                <button className="stepper-btn"
-                  onClick={() => setSettings(prev => {
-                    const newMax = Math.max(5, prev.maxRows - 5)
-                    return { ...prev, maxRows: newMax, initialRows: Math.min(prev.initialRows, newMax) }
-                  })}>−</button>
-              <span className="stepper-value">{settings.maxRows}</span>
-              <button className="stepper-btn"
-                onClick={() => setSettings(prev => ({ ...prev, maxRows: Math.min(50, prev.maxRows + 5) }))}>+</button>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">📏</span>
-            单位设置
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">称重单位</div>
-              <div className="setting-desc">称重数据的输入单位</div>
-            </div>
-            <div className="unit-toggle-group">
-              {WEIGHT_UNITS.map(u => (
-                <button key={u} className={`unit-btn ${settings.weightUnit === u ? 'unit-btn-active' : ''}`}
-                  onClick={() => setSettings(prev => ({ ...prev, weightUnit: u }))}>{u}</button>
-              ))}
-            </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">比例单位</div>
-              <div className="setting-desc">色粉添加比例的单位</div>
-            </div>
-            <div className="unit-toggle-group">
-              {RATIO_UNITS.map(u => (
-                <button key={u} className={`unit-btn ${settings.ratioUnit === u ? 'unit-btn-active' : ''}`}
-                  onClick={() => setSettings(prev => ({ ...prev, ratioUnit: u }))}>{u}</button>
-              ))}
-            </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">结果单位</div>
-              <div className="setting-desc">色粉添加量的输出单位</div>
-            </div>
-            <div className="unit-toggle-group">
-              {RESULT_UNITS.map(u => (
-                <button key={u} className={`unit-btn ${settings.resultUnit === u ? 'unit-btn-active' : ''}`}
-                  onClick={() => setSettings(prev => ({ ...prev, resultUnit: u }))}>{u}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">📱</span>
-            屏幕设置
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">屏幕常亮</div>
-              <div className="setting-desc">录入数据时防止屏幕自动熄灭</div>
-            </div>
-            <label className="toggle">
-              <input type="checkbox" checked={settings.screenAlwaysOn}
-                onChange={e => setSettings(prev => ({ ...prev, screenAlwaysOn: e.target.checked }))} />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">🔢</span>
-            显示设置
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">小数位数</div>
-              <div className="setting-desc">总重量显示的小数位数</div>
-            </div>
-            <div className="stepper">
-              <button className="stepper-btn"
-                onClick={() => setSettings(prev => ({ ...prev, decimalPlaces: Math.max(0, prev.decimalPlaces - 1) }))}>−</button>
-              <span className="stepper-value">{settings.decimalPlaces}</span>
-              <button className="stepper-btn"
-                onClick={() => setSettings(prev => ({ ...prev, decimalPlaces: Math.min(4, prev.decimalPlaces + 1) }))}>+</button>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">💾</span>
-            数据备份
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">导出备份</div>
-              <div className="setting-desc">App 内调起系统分享面板导出文件，网页直接下载</div>
-            </div>
-          </div>
-          <div className="backup-actions">
-            <button className="btn btn-primary btn-sm" onClick={exportBackup}>导出配置</button>
-            <button className="btn btn-outline btn-sm" onClick={() => backupFileRef.current?.click()}>导入配置</button>
-            <input ref={backupFileRef} type="file" accept="application/json,.json" className="backup-file-input"
-              onChange={e => {
-                const f = e.target.files?.[0]
-                if (f) importBackup(f)
-                e.target.value = ''
-              }} />
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-title">
-            <span className="card-title-icon">ℹ️</span>
-            关于
-          </div>
-          <div className="about-info">
-            <div className="about-row">
-              <span>应用名称</span>
-              <span>称重色粉计算器</span>
-            </div>
-            <div className="about-row">
-              <span>版本</span>
-              <span>v{pkg.version}</span>
-            </div>
-            <div className="about-row">
-              <span>用途</span>
-              <span>工业称重与色粉配比</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <SettingsPage
+        settings={settings}
+        setSettings={setSettings}
+        voices={voices}
+        voicesLoaded={voicesLoaded}
+        testVoice={testVoice}
+        exportBackup={exportBackup}
+        importBackup={importBackup}
+        onBack={() => setPage('home')}
+      />
     )
   }
 
-  // 历史记录页面
   if (page === 'history') {
     return (
-      <div className="app safe-top">
-        <div className="page-header">
-          <button className="back-btn" onClick={() => setPage('home')}>← 返回</button>
-          <h2>历史记录</h2>
-          <div style={{ width: 60 }} />
-        </div>
-
-        {history.length === 0 ? (
-          <div className="card">
-            <div className="empty-state">
-              <span className="empty-icon">📋</span>
-              <p>暂无历史记录</p>
-              <p className="empty-sub">配比结果有效时会自动保存，无需手动操作</p>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="history-actions">
-              <span className="history-count">共 {history.length} 条记录 · 点击卡片回填</span>
-              <button className="btn-clear" onClick={clearHistory}>清空全部</button>
-            </div>
-            {history.map(record => (
-              <div key={record.id} className="card history-card" onClick={() => loadRecord(record)}>
-                <div className="history-header">
-                  <span className="history-date">{record.date}</span>
-                  <button className="remove-row-btn"
-                    onClick={e => { e.stopPropagation(); deleteRecord(record.id) }} title="删除记录">✕</button>
-                </div>
-                <div className="history-body">
-                  <div className="history-item">
-                    <span className="history-item-label">总重量</span>
-                    <span className="history-item-value">{record.totalWeight.toFixed(settings.decimalPlaces)} {record.weightUnit || 'kg'}</span>
-                  </div>
-                  {record.recipe.map((p, i) => (
-                    <div className="history-item" key={i}>
-                      <span className="history-item-label">{p.name || `色粉${i + 1}`}</span>
-                      <span className="history-item-value highlight">{p.amount.toFixed(1)} {record.resultUnit || 'g'}</span>
-                    </div>
-                  ))}
-                  {record.recipe.length > 1 && record.totalPowderAmount > 0 && (
-                    <div className="history-item">
-                      <span className="history-item-label">合计</span>
-                      <span className="history-item-value highlight">{record.totalPowderAmount.toFixed(1)} {record.resultUnit || 'g'}</span>
-                    </div>
-                  )}
-                </div>
-                <div className="history-weight-tags">
-                  {record.weights.filter(w => w !== '').map((w, i) => (
-                    <span key={i} className="weight-tag">{w}{record.weightUnit || 'kg'}</span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </>
-        )}
-      </div>
+      <HistoryPage
+        history={history}
+        decimalPlaces={settings.decimalPlaces}
+        loadRecord={loadRecord}
+        deleteRecord={deleteRecord}
+        clearHistory={clearHistory}
+        onBack={() => setPage('home')}
+      />
     )
   }
 
