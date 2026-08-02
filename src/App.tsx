@@ -867,6 +867,64 @@ function App() {
     speakNumber('123.45', voice, settings.voiceRate)
   }, [getVoice, settings.voiceRate])
 
+  // 导出全部配置（设置、历史、配方预设）为 JSON 文件
+  const exportBackup = useCallback(() => {
+    const data = {
+      app: 'weight-calculator',
+      version: pkg.version,
+      exportedAt: new Date().toISOString(),
+      settings,
+      history: historyRef.current,
+      presets: presetsRef.current,
+    }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `weight-calculator-backup-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [settings])
+
+  // 导入配置备份文件并覆盖当前数据
+  const importBackup = useCallback((file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result))
+        if (!data || data.app !== 'weight-calculator') {
+          window.alert('无效的备份文件')
+          return
+        }
+        if (!window.confirm('导入将覆盖当前全部设置、历史记录与配方预设，确定继续？')) return
+        if (data.settings && typeof data.settings === 'object') {
+          const merged: Settings = { ...DEFAULT_SETTINGS, ...data.settings, voiceRate: data.settings.voiceRate ?? 1.0 }
+          if (merged.initialRows > merged.maxRows) merged.initialRows = merged.maxRows
+          setSettings(merged)
+          saveSettings(merged)
+        }
+        if (Array.isArray(data.history)) {
+          const recs: HistoryRecord[] = data.history.filter((r: any) =>
+            r && typeof r.id === 'string' && Array.isArray(r.weights))
+          setHistory(recs)
+          saveHistory(recs)
+        }
+        if (Array.isArray(data.presets)) {
+          const ps: RecipePreset[] = data.presets.filter((p: any) =>
+            p && typeof p.id === 'string' && typeof p.name === 'string' && Array.isArray(p.recipe))
+          setPresets(ps)
+          savePresets(ps)
+        }
+        window.alert('导入成功')
+      } catch {
+        window.alert('备份文件解析失败')
+      }
+    }
+    reader.readAsText(file)
+  }, [])
+
+  const backupFileRef = useRef<HTMLInputElement | null>(null)
+
   // 设置页面
   if (page === 'settings') {
     return (
@@ -1086,6 +1144,29 @@ function App() {
               <button className="stepper-btn"
                 onClick={() => setSettings(prev => ({ ...prev, decimalPlaces: Math.min(4, prev.decimalPlaces + 1) }))}>+</button>
             </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">
+            <span className="card-title-icon">💾</span>
+            数据备份
+          </div>
+          <div className="setting-row">
+            <div>
+              <div className="setting-label">导出备份</div>
+              <div className="setting-desc">保存全部设置、历史记录与配方预设为 JSON 文件</div>
+            </div>
+          </div>
+          <div className="backup-actions">
+            <button className="btn btn-primary btn-sm" onClick={exportBackup}>导出配置</button>
+            <button className="btn btn-outline btn-sm" onClick={() => backupFileRef.current?.click()}>导入配置</button>
+            <input ref={backupFileRef} type="file" accept="application/json,.json" className="backup-file-input"
+              onChange={e => {
+                const f = e.target.files?.[0]
+                if (f) importBackup(f)
+                e.target.value = ''
+              }} />
           </div>
         </div>
 
