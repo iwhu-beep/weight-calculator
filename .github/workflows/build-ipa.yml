@@ -21,15 +21,13 @@ permissions:
 jobs:
   build-ipa:
     runs-on: macos-15
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -76,7 +74,7 @@ jobs:
           echo "IPA size: $(du -h App.ipa | cut -f1)"
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: App.ipa
           path: App.ipa
