@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
+import pkg from '../package.json'
 
 interface WeightEntry {
   id: number
@@ -94,10 +95,24 @@ function createDefaultWeights(count: number): WeightEntry[] {
   return Array.from({ length: count }, (_, i) => ({ id: i + 1, value: '' }))
 }
 
-// 按键音
-function playKeySound() {
+// 按键音 - 复用单例 AudioContext，避免每次按键都新建导致内存累积
+let audioCtx: AudioContext | null = null
+
+function getAudioCtx(): AudioContext | null {
   try {
-    const ctx = new AudioContext()
+    if (!audioCtx) audioCtx = new AudioContext()
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {})
+    }
+    return audioCtx
+  } catch { /* ignore */ }
+  return null
+}
+
+function playKeySound() {
+  const ctx = getAudioCtx()
+  if (!ctx) return
+  try {
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
     osc.connect(gain)
@@ -163,28 +178,44 @@ function calcColorPowder(
 type Page = 'home' | 'settings' | 'history'
 
 function App() {
+  // 惰性初始化，只读取一次 localStorage
+  const initialRef = useRef<Settings | null>(null)
+  if (initialRef.current === null) {
+    initialRef.current = loadSettings()
+  }
+  const initialSettings = initialRef.current
   const [page, setPage] = useState<Page>('home')
-  const [settings, setSettings] = useState<Settings>(loadSettings)
-  const [weights, setWeights] = useState<WeightEntry[]>(() => createDefaultWeights(loadSettings().initialRows))
+  const [settings, setSettings] = useState<Settings>(initialSettings)
+  const [weights, setWeights] = useState<WeightEntry[]>(() => createDefaultWeights(initialSettings.initialRows))
   const [ratio, setRatio] = useState('')
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
   const [voices, setVoices] = useState<VoiceOption[]>([])
-  const nextIdRef = useRef(settings.initialRows + 1)
+  const [voicesLoaded, setVoicesLoaded] = useState(false)
+  const nextIdRef = useRef(initialSettings.initialRows + 1)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+  const voiceTimerRef = useRef<number | null>(null)
+  const historyRef = useRef<HistoryRecord[]>(history)
+  historyRef.current = history
 
   // 屏幕常亮 - 优先使用 Capacitor KeepAwake，其次 Wake Lock API
   useEffect(() => {
+    // disposed 标记防止 effect 清理后异步操作仍生效（如 StrictMode 双重挂载）
+    let disposed = false
+
     const enableKeepAwake = async () => {
       try {
         await KeepAwake.keepAwake()
-        console.log('KeepAwake enabled')
-      } catch (e) {
+      } catch {
+        if (disposed) return
         // Capacitor 插件不可用时，尝试浏览器 Wake Lock API
         try {
           if ('wakeLock' in navigator) {
             const wakeLock = await navigator.wakeLock.request('screen')
+            if (disposed) {
+              wakeLock.release().catch(() => {})
+              return
+            }
             wakeLockRef.current = wakeLock
-            console.log('Wake Lock acquired')
           }
         } catch { /* ignore */ }
       }
@@ -192,13 +223,11 @@ function App() {
     const disableKeepAwake = async () => {
       try {
         await KeepAwake.allowSleep()
-        console.log('KeepAwake disabled')
       } catch { /* ignore */ }
       try {
         if (wakeLockRef.current) {
           await wakeLockRef.current.release()
           wakeLockRef.current = null
-          console.log('Wake Lock released')
         }
       } catch { /* ignore */ }
     }
@@ -211,13 +240,14 @@ function App() {
 
     // 页面可见性变化时重新获取锁
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && settings.screenAlwaysOn) {
+      if (document.visibilityState === 'visible' && settings.screenAlwaysOn && !disposed) {
         enableKeepAwake()
       }
     }
     document.addEventListener('visibilitychange', handleVisibility)
 
     return () => {
+      disposed = true
       disableKeepAwake()
       document.removeEventListener('visibilitychange', handleVisibility)
     }
@@ -247,10 +277,16 @@ function App() {
 
       const sorted: VoiceOption[] = zhVoices.map(v => ({ voice: v, label: formatLabel(v) }))
       setVoices(sorted)
+      setVoicesLoaded(true)
     }
     loadVoices()
     window.speechSynthesis.onvoiceschanged = loadVoices
-    return () => { window.speechSynthesis.onvoiceschanged = null }
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null
+      if (voiceTimerRef.current !== null) {
+        window.clearTimeout(voiceTimerRef.current)
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -263,12 +299,22 @@ function App() {
     return voices[idx]?.voice ?? null
   }, [voices, settings.voiceIndex])
 
+  // 语音读数加防抖，停止输入后再朗读，避免逐键朗读
+  const speakDebounced = useCallback((value: string) => {
+    if (voiceTimerRef.current !== null) {
+      window.clearTimeout(voiceTimerRef.current)
+    }
+    if (value === '') return
+    voiceTimerRef.current = window.setTimeout(() => {
+      speakNumber(value, getVoice(), settings.voiceRate)
+      voiceTimerRef.current = null
+    }, 600)
+  }, [getVoice, settings.voiceRate])
+
   const handleInput = useCallback((value: string) => {
     if (settings.soundEnabled) playKeySound()
-    if (settings.voiceEnabled && value) {
-      speakNumber(value, getVoice(), settings.voiceRate)
-    }
-  }, [settings.soundEnabled, settings.voiceEnabled, settings.voiceRate, getVoice])
+    if (settings.voiceEnabled) speakDebounced(value)
+  }, [settings.soundEnabled, settings.voiceEnabled, speakDebounced])
 
   const handleWeightChange = useCallback((id: number, value: string) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
@@ -311,10 +357,11 @@ function App() {
       ratioUnit: settings.ratioUnit,
       resultUnit: settings.resultUnit,
     }
-    const newHistory = [record, ...history]
+    // 用 historyRef 读取最新记录，避免连续保存时 stale closure 丢失记录
+    const newHistory = [record, ...historyRef.current].slice(0, 50)
     setHistory(newHistory)
     saveHistory(newHistory)
-  }, [weights, totalWeightRaw, ratioValue, colorPowderAmount, filledCount, history, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
+  }, [weights, totalWeightRaw, ratioValue, colorPowderAmount, filledCount, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
 
   const loadRecord = useCallback((record: HistoryRecord) => {
     setWeights(record.weights.map((v, i) => ({ id: i + 1, value: v })))
@@ -331,10 +378,10 @@ function App() {
   }, [])
 
   const deleteRecord = useCallback((id: string) => {
-    const newHistory = history.filter(r => r.id !== id)
+    const newHistory = historyRef.current.filter(r => r.id !== id)
     setHistory(newHistory)
     saveHistory(newHistory)
-  }, [history])
+  }, [])
 
   const clearHistory = useCallback(() => {
     setHistory([])
@@ -394,7 +441,8 @@ function App() {
               <div className="voice-select-wrap">
                 <select className="voice-select" value={settings.voiceIndex}
                   onChange={e => setSettings(prev => ({ ...prev, voiceIndex: parseInt(e.target.value) }))}>
-                  {voices.length === 0 && <option value={0}>加载中...</option>}
+                  {!voicesLoaded && <option value={0}>加载中...</option>}
+                  {voicesLoaded && voices.length === 0 && <option value={0}>无可用中文语音</option>}
                   {voices.map((v, i) => (
                     <option key={i} value={i}>{v.label}</option>
                   ))}
@@ -546,7 +594,7 @@ function App() {
             </div>
             <div className="about-row">
               <span>版本</span>
-              <span>v1.3.0</span>
+              <span>v{pkg.version}</span>
             </div>
             <div className="about-row">
               <span>用途</span>
