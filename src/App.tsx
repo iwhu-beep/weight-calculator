@@ -85,13 +85,28 @@ function saveSettings(s: Settings) {
 function loadHistory(): HistoryRecord[] {
   try {
     const saved = localStorage.getItem('wc_history')
-    if (saved) return JSON.parse(saved)
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      // 过滤结构损坏的记录，避免渲染时崩溃
+      if (Array.isArray(parsed)) {
+        return parsed.filter(r =>
+          r && typeof r === 'object' &&
+          typeof r.id === 'string' &&
+          Array.isArray(r.weights)
+        )
+      }
+    }
   } catch { /* ignore */ }
   return []
 }
 
 function saveHistory(records: HistoryRecord[]) {
   localStorage.setItem('wc_history', JSON.stringify(records.slice(0, 50)))
+}
+
+function newHistoryId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 function createDefaultWeights(count: number): WeightEntry[] {
@@ -281,6 +296,11 @@ function App() {
       const sorted: VoiceOption[] = zhVoices.map(v => ({ voice: v, label: formatLabel(v) }))
       setVoices(sorted)
       setVoicesLoaded(true)
+      // 语音列表变化时钳制 voiceIndex，避免越界
+      setSettings(prev => {
+        if (sorted.length === 0 || prev.voiceIndex < sorted.length) return prev
+        return { ...prev, voiceIndex: sorted.length - 1 }
+      })
     }
     loadVoices()
     window.speechSynthesis.onvoiceschanged = loadVoices
@@ -295,6 +315,14 @@ function App() {
   useEffect(() => {
     saveSettings(settings)
   }, [settings])
+
+  // 关闭语音读数时取消尚未触发的防抖朗读
+  useEffect(() => {
+    if (!settings.voiceEnabled && voiceTimerRef.current !== null) {
+      window.clearTimeout(voiceTimerRef.current)
+      voiceTimerRef.current = null
+    }
+  }, [settings.voiceEnabled])
 
   const getVoice = useCallback((): SpeechSynthesisVoice | null => {
     if (voices.length === 0) return null
@@ -351,7 +379,7 @@ function App() {
   const saveRecord = useCallback(() => {
     if (filledCount === 0) return
     const record: HistoryRecord = {
-      id: Date.now().toString(),
+      id: newHistoryId(),
       date: new Date().toLocaleString('zh-CN'),
       weights: weights.map(w => w.value),
       totalWeight: totalWeightRaw,
