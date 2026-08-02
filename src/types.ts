@@ -38,7 +38,6 @@ export interface RecipePreset {
 export interface Draft {
   weights: string[]
   recipe: { name: string; ratio: string }[]
-  entryValue?: string
   savedAt: number
 }
 
@@ -63,6 +62,7 @@ export interface Settings {
   voiceIndex: number
   voiceRate: number
   decimalPlaces: number
+  initialRows: number
   maxRows: number
   weightUnit: WeightUnit
   ratioUnit: RatioUnit

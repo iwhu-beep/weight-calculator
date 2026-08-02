@@ -1,5 +1,5 @@
 import { BATCH_WINDOW_MS } from '../constants'
-import type { HistoryRecord, RecipeItem, ResultUnit, RatioUnit, WeightUnit } from '../types'
+import type { HistoryRecord, RecipeItem, ResultUnit, RatioUnit, WeightEntry, WeightUnit } from '../types'
 
 /**
  * 计算色粉添加量
@@ -61,4 +61,8 @@ export function isSameBatch(latest: HistoryRecord, current: HistoryRecord): bool
   const latestAt = latest.savedAt ?? 0
   if (Date.now() - latestAt > BATCH_WINDOW_MS) return false
   return true
+}
+
+export function createDefaultWeights(count: number): WeightEntry[] {
+  return Array.from({ length: count }, (_, i) => ({ id: i + 1, value: '' }))
 }

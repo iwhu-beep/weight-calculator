@@ -12,6 +12,8 @@ export function loadSettings(): Settings {
     if (saved) {
       const parsed = JSON.parse(saved)
       const merged: Settings = { ...DEFAULT_SETTINGS, ...parsed, voiceRate: parsed.voiceRate ?? 1.0 }
+      // 防御旧数据：initialRows 不能超过 maxRows
+      if (merged.initialRows > merged.maxRows) merged.initialRows = merged.maxRows
       return merged
     }
   } catch { /* ignore */ }
