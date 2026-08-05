@@ -140,6 +140,24 @@ html, html * {
   align-items: center;
   justify-content: center;
   transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+  position: relative;
+}
+
+.header-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--card-bg);
 }
 
 .header-btn:active {
@@ -845,6 +863,34 @@ html[data-theme='dark'] .toggle-slider {
 .about-row span:last-child {
   color: var(--text-primary);
   font-weight: 600;
+}
+
+/* Update banner */
+.update-banner {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-light);
+  border: 1.5px solid var(--primary);
+}
+
+.update-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary-dark);
+  margin-bottom: 4px;
+}
+
+.update-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.update-actions {
+  display: flex;
+  gap: 8px;
 }
 
 /* ========== History ========== */

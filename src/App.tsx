@@ -10,6 +10,8 @@ import { DEFAULT_SETTINGS, MAX_RECIPE_ROWS } from './constants'
 import { RATIO_UNITS, RESULT_UNITS, WEIGHT_UNITS } from './types'
 import { calcColorPowder, createDefaultWeights, isSameBatch, recordSignature } from './lib/calc'
 import { playHaptic, playKeySound, speakNumber } from './lib/media'
+import { checkForUpdate } from './lib/updater'
+import type { UpdateCheckResult } from './lib/updater'
 import {
   clearDraft,
   loadDraft,
@@ -67,6 +69,9 @@ function App() {
   const [voicesLoaded, setVoicesLoaded] = useState(false)
   const [presetName, setPresetName] = useState('')
   const [namingPreset, setNamingPreset] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [updateChecked, setUpdateChecked] = useState(false)
   const nextIdRef = useRef(initialDraft ? initialDraft.weights.length + 1 : initialSettings.initialRows + 1)
   const nextRecipeIdRef = useRef(initialDraft && initialDraft.recipe.length > 0 ? initialDraft.recipe.length + 1 : 2)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
@@ -198,6 +203,21 @@ function App() {
     setWeights(next)
     nextIdRef.current = next.length + 1
   }, [settings.maxRows, weights])
+
+  // 版本自检：手动检查更新（manual=true 时显示失败/结果状态）
+  const checkUpdate = useCallback(async (manual: boolean) => {
+    setCheckingUpdate(true)
+    const info = await checkForUpdate()
+    setUpdateInfo(info)
+    setCheckingUpdate(false)
+    if (manual) setUpdateChecked(true)
+  }, [])
+
+  // 启动后静默检查一次，有新版时设置页与首页角标提示
+  useEffect(() => {
+    const t = window.setTimeout(() => { void checkUpdate(false) }, 4000)
+    return () => window.clearTimeout(t)
+  }, [checkUpdate])
 
   // 主题：跟随系统 / 浅色 / 深色，设置 html[data-theme]
   useEffect(() => {
@@ -645,6 +665,10 @@ function App() {
         testVoice={testVoice}
         exportBackup={exportBackup}
         importBackup={importBackup}
+        updateInfo={updateInfo}
+        checkingUpdate={checkingUpdate}
+        updateChecked={updateChecked}
+        checkUpdate={checkUpdate}
         onBack={() => setPage('home')}
       />
     )
@@ -674,7 +698,9 @@ function App() {
         </h1>
         <div className="header-actions">
           <button className="header-btn" onClick={() => setPage('history')} title="历史记录">📋</button>
-          <button className="header-btn" onClick={() => setPage('settings')} title="设置">⚙️</button>
+          <button className="header-btn" onClick={() => setPage('settings')} title="设置">⚙️
+            {updateInfo?.hasUpdate && <span className="header-badge">1</span>}
+          </button>
         </div>
       </div>
 

@@ -2,6 +2,8 @@ import { useRef } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { RATIO_UNITS, RESULT_UNITS, WEIGHT_UNITS } from '../types'
 import type { Settings, VoiceOption } from '../types'
+import { openExternal } from '../lib/updater'
+import type { UpdateCheckResult } from '../lib/updater'
 import pkg from '../../package.json'
 
 interface SettingsPageProps {
@@ -12,6 +14,10 @@ interface SettingsPageProps {
   testVoice: () => void
   exportBackup: () => void
   importBackup: (file: File) => void
+  updateInfo: UpdateCheckResult | null
+  checkingUpdate: boolean
+  updateChecked: boolean
+  checkUpdate: (manual: boolean) => void
   onBack: () => void
 }
 
@@ -23,6 +29,10 @@ export default function SettingsPage({
   testVoice,
   exportBackup,
   importBackup,
+  updateInfo,
+  checkingUpdate,
+  updateChecked,
+  checkUpdate,
   onBack,
 }: SettingsPageProps) {
   const backupFileRef = useRef<HTMLInputElement | null>(null)
@@ -289,6 +299,34 @@ export default function SettingsPage({
             <span>工业称重与色粉配比</span>
           </div>
         </div>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">版本自检</div>
+            <div className="setting-desc">检查 GitHub Releases 是否有新版本</div>
+          </div>
+          <button className="btn btn-outline btn-sm" onClick={() => checkUpdate(true)} disabled={checkingUpdate}>
+            {checkingUpdate ? '检查中...' : updateChecked
+              ? (updateInfo ? (updateInfo.hasUpdate ? '有新版本' : '已是最新') : '检查失败')
+              : '检查更新'}
+          </button>
+        </div>
+        {updateInfo?.hasUpdate && (
+          <div className="update-banner">
+            <div className="update-title">发现新版本 v{updateInfo.latest}</div>
+            <div className="update-desc">
+              当前 v{updateInfo.current}，点击按钮下载最新 IPA 安装包
+              {updateInfo.publishedAt ? `（发布于 ${updateInfo.publishedAt.slice(0, 10)}）` : ''}
+            </div>
+            <div className="update-actions">
+              <button className="btn btn-primary btn-sm" onClick={() => openExternal(updateInfo.downloadUrl ?? updateInfo.releaseUrl)}>
+                下载新版本
+              </button>
+              <button className="btn btn-outline btn-sm" onClick={() => openExternal(updateInfo.releaseUrl)}>
+                查看更新说明
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
