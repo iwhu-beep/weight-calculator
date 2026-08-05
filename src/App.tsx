@@ -80,6 +80,7 @@ function App() {
   const saveHistoryTimerRef = useRef<number | null>(null)
   const weightInputRefs = useRef<(HTMLInputElement | null)[]>([])
   const recipeRatioInputRefs = useRef<(HTMLInputElement | null)[]>([])
+  const resultCardRef = useRef<HTMLDivElement | null>(null)
   const historyRef = useRef<HistoryRecord[]>(history)
   historyRef.current = history
   const presetsRef = useRef<RecipePreset[]>(presets)
@@ -520,6 +521,11 @@ function App() {
     speakNumber('123.45', voice, settings.voiceRate)
   }, [getVoice, settings.voiceRate])
 
+  // 滚动到详细结果卡片
+  const scrollToResult = useCallback(() => {
+    resultCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
   // 导出全部配置（设置、历史、配方预设）为 JSON 文件
   const exportBackup = useCallback(async () => {
     try {
@@ -704,6 +710,16 @@ function App() {
         </div>
       </div>
 
+      {/* 实时结果预览横幅：结果有效时吸顶常驻，点击滚动到详细结果 */}
+      {totalWeightRaw > 0 && hasAnyRatio && (
+        <div className="result-banner" onClick={scrollToResult}>
+          <span className="result-banner-item result-banner-total">⚖️ {totalWeightRaw.toFixed(settings.decimalPlaces)} {settings.weightUnit}</span>
+          <span className="result-banner-item">🎨 {powderResults.filter(p => p.ratio > 0).length} 种</span>
+          <span className="result-banner-item result-banner-amount">✅ 合计 {totalPowderAmount.toFixed(1)} {settings.resultUnit}</span>
+          <span className="result-banner-arrow">▾</span>
+        </div>
+      )}
+
       {/* Weight Input Card */}
       <div className="card">
         <div className="card-title">
@@ -831,7 +847,7 @@ function App() {
 
       {/* Result Card */}
       {totalWeightRaw > 0 && hasAnyRatio && (
-        <div className="result-card result-card-sticky">
+        <div ref={resultCardRef} className="result-card result-card-sticky">
           <div className="card-title">
             <span className="card-title-icon">✅</span>
             色粉添加量

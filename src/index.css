@@ -516,10 +516,48 @@ html, html * {
   overflow: hidden;
 }
 
+/* 实时结果预览横幅：吸顶常驻，显示总重量/色粉数/合计 */
+.result-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin: 0 -16px 14px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+  border-bottom: 1.5px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.result-banner-item {
+  white-space: nowrap;
+}
+
+.result-banner-total {
+  color: var(--text-primary);
+}
+
+.result-banner-amount {
+  color: var(--success-dark);
+}
+
+.result-banner-arrow {
+  margin-left: auto;
+  color: var(--text-hint);
+  font-size: 11px;
+}
+
 /* 正向结果卡吸顶，滚动时始终可见 */
 .result-card-sticky {
   position: sticky;
-  top: 10px;
+  top: 46px;
   z-index: 10;
 }
 

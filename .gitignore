@@ -2,3 +2,7 @@ node_modules
 dist
 .DS_Store
 *.tsbuildinfo
+
+# Capacitor 原生工程由 CI 生成
+ios
+android
