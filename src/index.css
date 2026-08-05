@@ -1116,6 +1116,29 @@ html[data-theme='dark'] .toggle-slider {
   color: white;
 }
 
+.preset-save-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preset-name-input {
+  width: 120px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.preset-name-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
 .preset-list {
   display: flex;
   flex-wrap: wrap;

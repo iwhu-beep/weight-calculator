@@ -7,6 +7,7 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import HistoryPage from './components/HistoryPage'
 import SettingsPage from './components/SettingsPage'
 import { DEFAULT_SETTINGS, MAX_RECIPE_ROWS } from './constants'
+import { RATIO_UNITS, RESULT_UNITS, WEIGHT_UNITS } from './types'
 import { calcColorPowder, createDefaultWeights, isSameBatch, recordSignature } from './lib/calc'
 import { playHaptic, playKeySound, speakNumber } from './lib/media'
 import {
@@ -64,6 +65,8 @@ function App() {
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voicesLoaded, setVoicesLoaded] = useState(false)
+  const [presetName, setPresetName] = useState('')
+  const [namingPreset, setNamingPreset] = useState(false)
   const nextIdRef = useRef(initialDraft ? initialDraft.weights.length + 1 : initialSettings.initialRows + 1)
   const nextRecipeIdRef = useRef(initialDraft && initialDraft.recipe.length > 0 ? initialDraft.recipe.length + 1 : 2)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
@@ -188,6 +191,14 @@ function App() {
     saveSettings(settings)
   }, [settings])
 
+  // 最大行数减小后，裁剪已存在的超出行
+  useEffect(() => {
+    if (weights.length <= settings.maxRows) return
+    const next = weights.slice(0, settings.maxRows)
+    setWeights(next)
+    nextIdRef.current = next.length + 1
+  }, [settings.maxRows, weights])
+
   // 主题：跟随系统 / 浅色 / 深色，设置 html[data-theme]
   useEffect(() => {
     const root = document.documentElement
@@ -304,18 +315,26 @@ function App() {
       window.alert('请先输入至少一个色粉比例')
       return
     }
-    const inputName = window.prompt('请输入配方名称', '')?.trim()
-    if (inputName === null) return
-    const name = inputName || `配方 ${presetsRef.current.length + 1}`
+    // iOS WKWebView 不支持 window.prompt，改用应用内联输入
+    setPresetName('')
+    setNamingPreset(true)
+  }, [recipe])
+
+  const confirmSavePreset = useCallback((name: string) => {
+    const ratios = recipe.filter(r => (parseFloat(r.ratio) || 0) > 0)
+    if (ratios.length === 0) return
+    const finalName = name.trim() || `配方 ${presetsRef.current.length + 1}`
     const preset: RecipePreset = {
       id: newHistoryId(),
-      name,
+      name: finalName,
       recipe: ratios.map(r => ({ name: r.name.trim(), ratio: parseFloat(r.ratio) || 0 })),
       createdAt: Date.now(),
     }
     const newPresets = [preset, ...presetsRef.current]
     setPresets(newPresets)
     savePresets(newPresets)
+    setNamingPreset(false)
+    setPresetName('')
   }, [recipe])
 
   const applyPreset = useCallback((preset: RecipePreset) => {
@@ -418,6 +437,7 @@ function App() {
     const record = buildRecord()
     if (!record) return
     persistRecord(record)
+    clearDraft()
   }, [filledCount, buildRecord, persistRecord])
 
   // 自动保存历史记录（防抖）：配比有有效结果时自动存档
@@ -552,11 +572,42 @@ function App() {
           return
         }
         if (!window.confirm('导入将覆盖当前全部设置、历史记录与配方预设，确定继续？')) return
+        let importedSettings: Settings = { ...DEFAULT_SETTINGS }
         if (data.settings && typeof data.settings === 'object') {
-          const merged: Settings = { ...DEFAULT_SETTINGS, ...data.settings, voiceRate: data.settings.voiceRate ?? 1.0 }
-          if (merged.initialRows > merged.maxRows) merged.initialRows = merged.maxRows
-          setSettings(merged)
-          saveSettings(merged)
+          const s = data.settings as Record<string, unknown>
+          if (typeof s.soundEnabled === 'boolean') importedSettings.soundEnabled = s.soundEnabled
+          if (typeof s.hapticEnabled === 'boolean') importedSettings.hapticEnabled = s.hapticEnabled
+          if (typeof s.voiceEnabled === 'boolean') importedSettings.voiceEnabled = s.voiceEnabled
+          if (typeof s.voiceIndex === 'number' && Number.isFinite(s.voiceIndex) && s.voiceIndex >= 0) {
+            importedSettings.voiceIndex = Math.floor(s.voiceIndex)
+          }
+          if (typeof s.voiceRate === 'number' && Number.isFinite(s.voiceRate)) {
+            importedSettings.voiceRate = Math.min(2.0, Math.max(0.5, s.voiceRate))
+          }
+          if (typeof s.decimalPlaces === 'number' && Number.isFinite(s.decimalPlaces)) {
+            importedSettings.decimalPlaces = Math.min(4, Math.max(0, Math.floor(s.decimalPlaces)))
+          }
+          if (typeof s.maxRows === 'number' && Number.isFinite(s.maxRows)) {
+            importedSettings.maxRows = Math.min(50, Math.max(5, Math.floor(s.maxRows)))
+          }
+          if (typeof s.initialRows === 'number' && Number.isFinite(s.initialRows)) {
+            importedSettings.initialRows = Math.min(importedSettings.maxRows, Math.max(1, Math.floor(s.initialRows)))
+          }
+          if (typeof s.weightUnit === 'string' && (WEIGHT_UNITS as readonly string[]).includes(s.weightUnit)) {
+            importedSettings.weightUnit = s.weightUnit as WeightUnit
+          }
+          if (typeof s.ratioUnit === 'string' && (RATIO_UNITS as readonly string[]).includes(s.ratioUnit)) {
+            importedSettings.ratioUnit = s.ratioUnit as RatioUnit
+          }
+          if (typeof s.resultUnit === 'string' && (RESULT_UNITS as readonly string[]).includes(s.resultUnit)) {
+            importedSettings.resultUnit = s.resultUnit as ResultUnit
+          }
+          if (s.screenAlwaysOn === true) importedSettings.screenAlwaysOn = true
+          if (s.darkMode === 'light' || s.darkMode === 'dark' || s.darkMode === 'system') {
+            importedSettings.darkMode = s.darkMode
+          }
+          setSettings(importedSettings)
+          saveSettings(importedSettings)
         }
         if (Array.isArray(data.history)) {
           const recs: HistoryRecord[] = data.history.filter((r: any) =>
@@ -570,6 +621,12 @@ function App() {
           setPresets(ps)
           savePresets(ps)
         }
+        // 导入即覆盖：清空草稿并按导入设置重置输入区
+        clearDraft()
+        setWeights(createDefaultWeights(importedSettings.initialRows))
+        nextIdRef.current = importedSettings.initialRows + 1
+        setRecipe([{ id: 1, name: '', ratio: '' }])
+        nextRecipeIdRef.current = 2
         window.alert('导入成功')
       } catch {
         window.alert('备份文件解析失败')
@@ -680,7 +737,26 @@ function App() {
         <div className="preset-section">
           <div className="preset-header">
             <span className="preset-title">配方预设</span>
-            <button className="preset-save-btn" onClick={savePreset}>💾 保存当前</button>
+            {namingPreset ? (
+              <div className="preset-save-inline">
+                <input
+                  className="preset-name-input"
+                  type="text"
+                  placeholder="请输入配方名称"
+                  maxLength={12}
+                  autoFocus
+                  value={presetName}
+                  onChange={e => setPresetName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') confirmSavePreset(presetName)
+                    else if (e.key === 'Escape') setNamingPreset(false)
+                  }} />
+                <button className="preset-save-btn" onClick={() => confirmSavePreset(presetName)}>确定</button>
+                <button className="preset-save-btn" onClick={() => setNamingPreset(false)}>取消</button>
+              </div>
+            ) : (
+              <button className="preset-save-btn" onClick={savePreset}>💾 保存当前</button>
+            )}
           </div>
           {presets.length === 0 ? (
             <div className="preset-empty">暂无配方，可保存当前色粉配比</div>
