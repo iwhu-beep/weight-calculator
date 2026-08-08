@@ -1,24 +1,28 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
 import { Capacitor } from '@capacitor/core'
 import { Share } from '@capacitor/share'
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
-import HistoryPage from './components/HistoryPage'
-import SettingsPage from './components/SettingsPage'
+
+const SettingsPage = lazy(() => import('./components/SettingsPage'))
+const HistoryPage = lazy(() => import('./components/HistoryPage'))
 import { DEFAULT_SETTINGS, MAX_RECIPE_ROWS } from './constants'
-import { RATIO_UNITS, RESULT_UNITS, WEIGHT_UNITS } from './types'
+
 import { calcColorPowder, createDefaultWeights, isSameBatch, recordSignature } from './lib/calc'
 import { playHaptic, playKeySound, speakNumber } from './lib/media'
 import { checkForUpdate } from './lib/updater'
 import type { UpdateCheckResult } from './lib/updater'
 import {
   clearDraft,
+  isValidHistoryRecord,
+  isValidPreset,
   loadDraft,
   loadHistory,
   loadPresets,
   loadSettings,
   newHistoryId,
+  sanitizeSettings,
   saveDraft,
   saveHistory,
   savePresets,
@@ -142,10 +146,10 @@ function App() {
     }
   }, [settings.screenAlwaysOn])
 
-  // 原始输入值（按 weightUnit）
-  const totalWeightRaw = weights.reduce((sum, w) => sum + (parseFloat(w.value) || 0), 0)
-  const filledCount = weights.filter(w => w.value !== '').length
-  const powderResults = recipe.map(r => {
+  // 原始输入值（按 weightUnit），用 useMemo 避免输入时重复遍历
+  const totalWeightRaw = useMemo(() => weights.reduce((sum, w) => sum + (parseFloat(w.value) || 0), 0), [weights])
+  const filledCount = useMemo(() => weights.filter(w => w.value !== '').length, [weights])
+  const powderResults = useMemo(() => recipe.map(r => {
     const ratioValue = parseFloat(r.ratio) || 0
     return {
       name: r.name.trim(),
@@ -154,14 +158,26 @@ function App() {
         ? calcColorPowder(totalWeightRaw, ratioValue, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
         : 0,
     }
-  })
-  const hasAnyRatio = powderResults.some(p => p.ratio > 0)
-  const totalPowderAmount = powderResults.reduce((s, p) => s + p.amount, 0)
+  }), [recipe, totalWeightRaw, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
+  const activeResults = useMemo(() => powderResults.filter(p => p.ratio > 0), [powderResults])
+  const hasAnyRatio = activeResults.length > 0
+  const totalPowderAmount = useMemo(() => activeResults.reduce((s, p) => s + p.amount, 0), [activeResults])
+
+  // 镜像 ref：供页面隐藏/关闭时强制 flush 防抖保存使用
+  const weightsRef = useRef(weights)
+  weightsRef.current = weights
+  const recipeRef = useRef(recipe)
+  recipeRef.current = recipe
+  const totalWeightRef = useRef(totalWeightRaw)
+  totalWeightRef.current = totalWeightRaw
+  const hasAnyRatioRef = useRef(hasAnyRatio)
+  hasAnyRatioRef.current = hasAnyRatio
 
   // 加载语音列表 - 仅中文
   useEffect(() => {
+    const speechSynth = ('speechSynthesis' in window && window.speechSynthesis) || null
     const loadVoices = () => {
-      const allVoices = window.speechSynthesis.getVoices()
+      const allVoices = speechSynth ? speechSynth.getVoices() : []
       const zhVoices = allVoices.filter(v => v.lang.startsWith('zh'))
 
       const formatLabel = (v: SpeechSynthesisVoice) => {
@@ -184,9 +200,9 @@ function App() {
       })
     }
     loadVoices()
-    window.speechSynthesis.onvoiceschanged = loadVoices
+    if (speechSynth) speechSynth.onvoiceschanged = loadVoices
     return () => {
-      window.speechSynthesis.onvoiceschanged = null
+      if (speechSynth) speechSynth.onvoiceschanged = null
       if (voiceTimerRef.current !== null) {
         window.clearTimeout(voiceTimerRef.current)
       }
@@ -208,7 +224,7 @@ function App() {
   // 版本自检：手动检查更新（manual=true 时显示失败/结果状态）
   const checkUpdate = useCallback(async (manual: boolean) => {
     setCheckingUpdate(true)
-    const info = await checkForUpdate()
+    const info = await checkForUpdate(manual)
     setUpdateInfo(info)
     setCheckingUpdate(false)
     if (manual) setUpdateChecked(true)
@@ -316,12 +332,16 @@ function App() {
 
   const handleWeightChange = useCallback((id: number, value: string) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
+    const changed = weightsRef.current.some(w => w.id === id && w.value !== value)
+    if (!changed) return
     handleInput(value)
     setWeights(prev => prev.map(w => w.id === id ? { ...w, value } : w))
   }, [handleInput])
 
   const handleRecipeRatioChange = useCallback((id: number, value: string) => {
     if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
+    const changed = recipeRef.current.some(r => r.id === id && r.ratio !== value)
+    if (!changed) return
     handleInput(value)
     setRecipe(prev => prev.map(r => r.id === id ? { ...r, ratio: value } : r))
   }, [handleInput])
@@ -430,6 +450,10 @@ function App() {
     }
   }, [weights, totalWeightRaw, recipe, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
 
+  // 通过 ref 取最新的 buildRecord，避免历史防抖被无关重渲染重置
+  const buildRecordRef = useRef(buildRecord)
+  buildRecordRef.current = buildRecord
+
   // 统一持久化入口：完全相同的记录跳过；同批次（配方/单位相同且在时间窗口内）更新最新一条；否则新增
   const persistRecord = useCallback((record: HistoryRecord) => {
     const latest = historyRef.current[0]
@@ -461,7 +485,8 @@ function App() {
     clearDraft()
   }, [filledCount, buildRecord, persistRecord])
 
-  // 自动保存历史记录（防抖）：配比有有效结果时自动存档
+  // 自动保存历史记录（防抖）：配比有有效结果时自动存档。
+  // 通过 buildRecordRef 取最新构建函数，避免防抖被无关重渲染重置
   useEffect(() => {
     if (totalWeightRaw <= 0 || !hasAnyRatio) return
     if (saveHistoryTimerRef.current !== null) {
@@ -469,7 +494,7 @@ function App() {
     }
     saveHistoryTimerRef.current = window.setTimeout(() => {
       saveHistoryTimerRef.current = null
-      const record = buildRecord()
+      const record = buildRecordRef.current()
       if (!record) return
       persistRecord(record)
     }, 1000)
@@ -478,7 +503,39 @@ function App() {
         window.clearTimeout(saveHistoryTimerRef.current)
       }
     }
-  }, [totalWeightRaw, hasAnyRatio, buildRecord, persistRecord])
+  }, [weights, recipe, totalWeightRaw, hasAnyRatio, settings.weightUnit, settings.ratioUnit, settings.resultUnit, persistRecord])
+
+  // 页面隐藏/关闭时强制 flush 挂起的防抖保存，避免最后输入丢失
+  useEffect(() => {
+    const flushPending = () => {
+      if (saveDraftTimerRef.current !== null) {
+        window.clearTimeout(saveDraftTimerRef.current)
+        saveDraftTimerRef.current = null
+        saveDraft({
+          weights: weightsRef.current.map(w => w.value),
+          recipe: recipeRef.current.map(r => ({ name: r.name, ratio: r.ratio })),
+          savedAt: Date.now(),
+        })
+      }
+      if (saveHistoryTimerRef.current !== null) {
+        window.clearTimeout(saveHistoryTimerRef.current)
+        saveHistoryTimerRef.current = null
+        if (totalWeightRef.current > 0 && hasAnyRatioRef.current) {
+          const record = buildRecordRef.current()
+          if (record) persistRecord(record)
+        }
+      }
+    }
+    const handleVisibilityHidden = () => {
+      if (document.visibilityState === 'hidden') flushPending()
+    }
+    window.addEventListener('pagehide', flushPending)
+    document.addEventListener('visibilitychange', handleVisibilityHidden)
+    return () => {
+      window.removeEventListener('pagehide', flushPending)
+      document.removeEventListener('visibilitychange', handleVisibilityHidden)
+    }
+  }, [persistRecord])
 
   const loadRecord = useCallback((record: HistoryRecord) => {
     // 钳制到 maxRows，避免行数超出上限
@@ -600,50 +657,17 @@ function App() {
         if (!window.confirm('导入将覆盖当前全部设置、历史记录与配方预设，确定继续？')) return
         let importedSettings: Settings = { ...DEFAULT_SETTINGS }
         if (data.settings && typeof data.settings === 'object') {
-          const s = data.settings as Record<string, unknown>
-          if (typeof s.soundEnabled === 'boolean') importedSettings.soundEnabled = s.soundEnabled
-          if (typeof s.hapticEnabled === 'boolean') importedSettings.hapticEnabled = s.hapticEnabled
-          if (typeof s.voiceEnabled === 'boolean') importedSettings.voiceEnabled = s.voiceEnabled
-          if (typeof s.voiceIndex === 'number' && Number.isFinite(s.voiceIndex) && s.voiceIndex >= 0) {
-            importedSettings.voiceIndex = Math.floor(s.voiceIndex)
-          }
-          if (typeof s.voiceRate === 'number' && Number.isFinite(s.voiceRate)) {
-            importedSettings.voiceRate = Math.min(2.0, Math.max(0.5, s.voiceRate))
-          }
-          if (typeof s.decimalPlaces === 'number' && Number.isFinite(s.decimalPlaces)) {
-            importedSettings.decimalPlaces = Math.min(4, Math.max(0, Math.floor(s.decimalPlaces)))
-          }
-          if (typeof s.maxRows === 'number' && Number.isFinite(s.maxRows)) {
-            importedSettings.maxRows = Math.min(50, Math.max(5, Math.floor(s.maxRows)))
-          }
-          if (typeof s.initialRows === 'number' && Number.isFinite(s.initialRows)) {
-            importedSettings.initialRows = Math.min(importedSettings.maxRows, Math.max(1, Math.floor(s.initialRows)))
-          }
-          if (typeof s.weightUnit === 'string' && (WEIGHT_UNITS as readonly string[]).includes(s.weightUnit)) {
-            importedSettings.weightUnit = s.weightUnit as WeightUnit
-          }
-          if (typeof s.ratioUnit === 'string' && (RATIO_UNITS as readonly string[]).includes(s.ratioUnit)) {
-            importedSettings.ratioUnit = s.ratioUnit as RatioUnit
-          }
-          if (typeof s.resultUnit === 'string' && (RESULT_UNITS as readonly string[]).includes(s.resultUnit)) {
-            importedSettings.resultUnit = s.resultUnit as ResultUnit
-          }
-          if (s.screenAlwaysOn === true) importedSettings.screenAlwaysOn = true
-          if (s.darkMode === 'light' || s.darkMode === 'dark' || s.darkMode === 'system') {
-            importedSettings.darkMode = s.darkMode
-          }
+          importedSettings = sanitizeSettings(data.settings as Record<string, unknown>)
           setSettings(importedSettings)
           saveSettings(importedSettings)
         }
         if (Array.isArray(data.history)) {
-          const recs: HistoryRecord[] = data.history.filter((r: any) =>
-            r && typeof r.id === 'string' && Array.isArray(r.weights))
+          const recs: HistoryRecord[] = data.history.filter(isValidHistoryRecord)
           setHistory(recs)
           saveHistory(recs)
         }
         if (Array.isArray(data.presets)) {
-          const ps: RecipePreset[] = data.presets.filter((p: any) =>
-            p && typeof p.id === 'string' && typeof p.name === 'string' && Array.isArray(p.recipe))
+          const ps: RecipePreset[] = data.presets.filter(isValidPreset)
           setPresets(ps)
           savePresets(ps)
         }
@@ -663,33 +687,37 @@ function App() {
 
   if (page === 'settings') {
     return (
-      <SettingsPage
-        settings={settings}
-        setSettings={setSettings}
-        voices={voices}
-        voicesLoaded={voicesLoaded}
-        testVoice={testVoice}
-        exportBackup={exportBackup}
-        importBackup={importBackup}
-        updateInfo={updateInfo}
-        checkingUpdate={checkingUpdate}
-        updateChecked={updateChecked}
-        checkUpdate={checkUpdate}
-        onBack={() => setPage('home')}
-      />
+      <Suspense fallback={<div className="app safe-top"><div className="page-header"><h2>加载中...</h2></div></div>}>
+        <SettingsPage
+          settings={settings}
+          setSettings={setSettings}
+          voices={voices}
+          voicesLoaded={voicesLoaded}
+          testVoice={testVoice}
+          exportBackup={exportBackup}
+          importBackup={importBackup}
+          updateInfo={updateInfo}
+          checkingUpdate={checkingUpdate}
+          updateChecked={updateChecked}
+          checkUpdate={checkUpdate}
+          onBack={() => setPage('home')}
+        />
+      </Suspense>
     )
   }
 
   if (page === 'history') {
     return (
-      <HistoryPage
-        history={history}
-        decimalPlaces={settings.decimalPlaces}
-        loadRecord={loadRecord}
-        deleteRecord={deleteRecord}
-        clearHistory={clearHistory}
-        onBack={() => setPage('home')}
-      />
+      <Suspense fallback={<div className="app safe-top"><div className="page-header"><h2>加载中...</h2></div></div>}>
+        <HistoryPage
+          history={history}
+          decimalPlaces={settings.decimalPlaces}
+          loadRecord={loadRecord}
+          deleteRecord={deleteRecord}
+          clearHistory={clearHistory}
+          onBack={() => setPage('home')}
+        />
+      </Suspense>
     )
   }
 
@@ -714,8 +742,8 @@ function App() {
       {totalWeightRaw > 0 && hasAnyRatio && (
         <div className="result-banner" onClick={scrollToResult}>
           <span className="result-banner-item result-banner-total">⚖️ {totalWeightRaw.toFixed(settings.decimalPlaces)} {settings.weightUnit}</span>
-          <span className="result-banner-item">🎨 {powderResults.filter(p => p.ratio > 0).length} 种</span>
-          <span className="result-banner-item result-banner-amount">✅ 合计 {totalPowderAmount.toFixed(1)} {settings.resultUnit}</span>
+          <span className="result-banner-item">🎨 {activeResults.length} 种</span>
+          <span className="result-banner-item result-banner-amount">✅ 合计 {totalPowderAmount.toFixed(settings.decimalPlaces)} {settings.resultUnit}</span>
           <span className="result-banner-arrow">▾</span>
         </div>
       )}
@@ -853,22 +881,22 @@ function App() {
             色粉添加量
           </div>
           <div className="result-list">
-            {powderResults.filter(p => p.ratio > 0).map((p, i) => (
+            {activeResults.map((p, i) => (
               <div key={i} className="result-row">
                 <span className="result-powder-name">{p.name || `色粉${i + 1}`}</span>
                 <span className="result-powder-ratio">{p.ratio} {settings.ratioUnit}</span>
-                <span className="result-powder-amount">{p.amount.toFixed(1)} {settings.resultUnit}</span>
+                <span className="result-powder-amount">{p.amount.toFixed(settings.decimalPlaces)} {settings.resultUnit}</span>
               </div>
             ))}
           </div>
-          {powderResults.filter(p => p.ratio > 0).length > 1 && (
+          {activeResults.length > 1 && (
             <div className="result-total">
               <span>合计</span>
-              <span>{totalPowderAmount.toFixed(1)} {settings.resultUnit}</span>
+              <span>{totalPowderAmount.toFixed(settings.decimalPlaces)} {settings.resultUnit}</span>
             </div>
           )}
           <div className="result-formula">
-            总重量 {totalWeightRaw.toFixed(settings.decimalPlaces)} {settings.weightUnit} · 共 {powderResults.filter(p => p.ratio > 0).length} 种色粉
+            总重量 {totalWeightRaw.toFixed(settings.decimalPlaces)} {settings.weightUnit} · 共 {activeResults.length} 种色粉
           </div>
         </div>
       )}

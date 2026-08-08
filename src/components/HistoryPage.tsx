@@ -54,13 +54,13 @@ export default function HistoryPage({
                 {record.recipe.map((p, i) => (
                   <div className="history-item" key={i}>
                     <span className="history-item-label">{p.name || `色粉${i + 1}`}</span>
-                    <span className="history-item-value highlight">{p.amount.toFixed(1)} {record.resultUnit || 'g'}</span>
+                    <span className="history-item-value highlight">{p.amount.toFixed(decimalPlaces)} {record.resultUnit || 'g'}</span>
                   </div>
                 ))}
                 {record.recipe.length > 1 && record.totalPowderAmount > 0 && (
                   <div className="history-item">
                     <span className="history-item-label">合计</span>
-                    <span className="history-item-value highlight">{record.totalPowderAmount.toFixed(1)} {record.resultUnit || 'g'}</span>
+                    <span className="history-item-value highlight">{record.totalPowderAmount.toFixed(decimalPlaces)} {record.resultUnit || 'g'}</span>
                   </div>
                 )}
               </div>

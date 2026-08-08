@@ -41,6 +41,7 @@ export async function playHaptic() {
 // 语音读数
 export function speakNumber(text: string, voice: SpeechSynthesisVoice | null, rate: number) {
   try {
+    if (!('speechSynthesis' in window) || !window.speechSynthesis) return
     window.speechSynthesis.cancel()
     const utter = new SpeechSynthesisUtterance(text)
     if (voice) utter.voice = voice

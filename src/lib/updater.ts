@@ -5,6 +5,15 @@ import pkg from '../../package.json'
 const REPO = 'iwhu-beep/weight-calculator'
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`
 
+interface GitHubAsset {
+  name: string
+  browser_download_url: string
+}
+
+// 检查结果缓存：24 小时内不重复请求 GitHub API
+const CACHE_KEY = 'wc_update_check'
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+
 export interface UpdateCheckResult {
   current: string
   latest: string
@@ -33,8 +42,25 @@ export function compareVersions(a: string, b: string): number {
   return 0
 }
 
-// 检查 GitHub Releases 最新版本；网络异常/无发布时返回 null（不阻塞 App）
-export async function checkForUpdate(): Promise<UpdateCheckResult | null> {
+// 检查 GitHub Releases 最新版本；网络异常/无发布时返回 null（不阻塞 App）。
+// force 为 true 时跳过缓存（手动检查更新）
+export async function checkForUpdate(force = false): Promise<UpdateCheckResult | null> {
+  if (!force) {
+    try {
+      const cached = localStorage.getItem(CACHE_KEY)
+      if (cached) {
+        const parsed = JSON.parse(cached) as { at?: number; result?: UpdateCheckResult } | null
+        if (parsed && typeof parsed.at === 'number' && parsed.result && Date.now() - parsed.at < CACHE_TTL_MS) {
+          const r = parsed.result
+          return {
+            ...r,
+            current: pkg.version,
+            hasUpdate: compareVersions(r.latest, pkg.version) > 0,
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }
   try {
     const res = await fetch(API_URL, {
       headers: { Accept: 'application/vnd.github+json' },
@@ -43,10 +69,9 @@ export async function checkForUpdate(): Promise<UpdateCheckResult | null> {
     const data = await res.json()
     const latest = (data.tag_name as string | undefined)?.replace(/^v/, '')
     if (!latest) return null
-    const downloadAsset = Array.isArray(data.assets)
-      ? (data.assets.find((a: any) => a.name === 'App.ipa')?.browser_download_url ?? null)
-      : null
-    return {
+    const assets: GitHubAsset[] = Array.isArray(data.assets) ? data.assets as GitHubAsset[] : []
+    const downloadAsset = assets.find(a => a.name === 'App.ipa')?.browser_download_url ?? null
+    const result: UpdateCheckResult = {
       current: pkg.version,
       latest,
       hasUpdate: compareVersions(latest, pkg.version) > 0,
@@ -55,6 +80,10 @@ export async function checkForUpdate(): Promise<UpdateCheckResult | null> {
       name: data.name ?? null,
       publishedAt: data.published_at ?? null,
     }
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), result }))
+    } catch { /* ignore */ }
+    return result
   } catch {
     return null
   }
