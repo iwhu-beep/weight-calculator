@@ -9,7 +9,7 @@ const SettingsPage = lazy(() => import('./components/SettingsPage'))
 const HistoryPage = lazy(() => import('./components/HistoryPage'))
 import { DEFAULT_SETTINGS, MAX_RECIPE_ROWS } from './constants'
 
-import { calcColorPowder, createDefaultWeights, isSameBatch, recordSignature } from './lib/calc'
+import { calcColorPowder, convertWeight, createDefaultWeights, isSameBatch, recordSignature } from './lib/calc'
 import { playHaptic, playKeySound, speakNumber } from './lib/media'
 import { checkForUpdate } from './lib/updater'
 import type { UpdateCheckResult } from './lib/updater'
@@ -27,7 +27,8 @@ import {
   saveHistory,
   savePresets,
   saveSettings,
-} from './lib/storage'
+  } from './lib/storage'
+import { RATIO_UNITS, RESULT_UNITS, WEIGHT_UNITS } from './types'
 import type {
   Draft,
   HistoryRecord,
@@ -76,6 +77,7 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateChecked, setUpdateChecked] = useState(false)
+  const prevWeightUnitRef = useRef(initialSettings.weightUnit)
   const nextIdRef = useRef(initialDraft ? initialDraft.weights.length + 1 : initialSettings.initialRows + 1)
   const nextRecipeIdRef = useRef(initialDraft && initialDraft.recipe.length > 0 ? initialDraft.recipe.length + 1 : 2)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
@@ -220,6 +222,16 @@ function App() {
     setWeights(next)
     nextIdRef.current = next.length + 1
   }, [settings.maxRows, weights])
+
+  // 手动切换称重单位时，将已输入重量按新单位换算（kg↔g），避免数据失真
+  useEffect(() => {
+    const prev = prevWeightUnitRef.current
+    if (prev === settings.weightUnit) return
+    prevWeightUnitRef.current = settings.weightUnit
+    setWeights(prevWeights =>
+      prevWeights.map(w => ({ ...w, value: convertWeight(w.value, prev, settings.weightUnit) }))
+    )
+  }, [settings.weightUnit])
 
   // 版本自检：手动检查更新（manual=true 时显示失败/结果状态）
   const checkUpdate = useCallback(async (manual: boolean) => {
@@ -547,15 +559,26 @@ function App() {
       : [{ id: 1, name: '', ratio: '' }]
     setRecipe(loadedRecipe)
     nextRecipeIdRef.current = loadedRecipe.length + 1
-    // 加载记录时也切换单位
+    // 采用记录自带单位（非法值回退当前），记录数值本身即按该单位录入，无需换算
+    const recWeightUnit: WeightUnit = (WEIGHT_UNITS as readonly string[]).includes(record.weightUnit)
+      ? record.weightUnit as WeightUnit
+      : settings.weightUnit
+    const recRatioUnit: RatioUnit = (RATIO_UNITS as readonly string[]).includes(record.ratioUnit)
+      ? record.ratioUnit as RatioUnit
+      : settings.ratioUnit
+    const recResultUnit: ResultUnit = (RESULT_UNITS as readonly string[]).includes(record.resultUnit)
+      ? record.resultUnit as ResultUnit
+      : settings.resultUnit
+    // 单位切换 effect 会换算已输入数值，这里同步 ref，避免对记录原始值二次换算
+    prevWeightUnitRef.current = recWeightUnit
     setSettings(prev => ({
       ...prev,
-      weightUnit: (record.weightUnit as WeightUnit) || prev.weightUnit,
-      ratioUnit: (record.ratioUnit as RatioUnit) || prev.ratioUnit,
-      resultUnit: (record.resultUnit as ResultUnit) || prev.resultUnit,
+      weightUnit: recWeightUnit,
+      ratioUnit: recRatioUnit,
+      resultUnit: recResultUnit,
     }))
     setPage('home')
-  }, [settings.maxRows])
+  }, [settings.maxRows, settings.weightUnit])
 
   const deleteRecord = useCallback((id: string) => {
     if (!historyRef.current.some(r => r.id === id)) return

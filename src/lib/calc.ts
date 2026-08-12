@@ -66,3 +66,12 @@ export function isSameBatch(latest: HistoryRecord, current: HistoryRecord): bool
 export function createDefaultWeights(count: number): WeightEntry[] {
   return Array.from({ length: count }, (_, i) => ({ id: i + 1, value: '' }))
 }
+
+// 称重单位换算（kg↔g）：仅换算非空合法数值，用 10 位小数去除浮点噪声后返回规整字符串
+export function convertWeight(value: string, from: WeightUnit, to: WeightUnit): string {
+  if (value === '' || from === to) return value
+  const num = parseFloat(value)
+  if (!Number.isFinite(num)) return value
+  const factor = from === 'kg' ? 1000 : 1 / 1000
+  return String(parseFloat((num * factor).toFixed(10)))
+}
