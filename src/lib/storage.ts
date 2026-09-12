@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, MAX_HISTORY, MAX_PRESETS } from '../constants'
+import { DECIMAL_PLACES_MAX, DECIMAL_PLACES_MIN, DEFAULT_SETTINGS, MAX_HISTORY, MAX_PRESETS, MAX_ROWS_MAX, MAX_ROWS_MIN, VOICE_RATE_MAX, VOICE_RATE_MIN } from '../constants'
 import { RATIO_UNITS, RESULT_UNITS, WEIGHT_UNITS } from '../types'
 import type { Draft, HistoryRecord, RatioUnit, RecipePreset, ResultUnit, Settings, WeightUnit } from '../types'
 
@@ -30,13 +30,13 @@ export function sanitizeSettings(raw: Record<string, unknown>): Settings {
     s.voiceIndex = Math.floor(raw.voiceIndex)
   }
   if (typeof raw.voiceRate === 'number' && Number.isFinite(raw.voiceRate)) {
-    s.voiceRate = Math.min(2.0, Math.max(0.5, raw.voiceRate))
+    s.voiceRate = Math.min(VOICE_RATE_MAX, Math.max(VOICE_RATE_MIN, raw.voiceRate))
   }
   if (typeof raw.decimalPlaces === 'number' && Number.isFinite(raw.decimalPlaces)) {
-    s.decimalPlaces = Math.min(4, Math.max(0, Math.floor(raw.decimalPlaces)))
+    s.decimalPlaces = Math.min(DECIMAL_PLACES_MAX, Math.max(DECIMAL_PLACES_MIN, Math.floor(raw.decimalPlaces)))
   }
   if (typeof raw.maxRows === 'number' && Number.isFinite(raw.maxRows)) {
-    s.maxRows = Math.min(50, Math.max(5, Math.floor(raw.maxRows)))
+    s.maxRows = Math.min(MAX_ROWS_MAX, Math.max(MAX_ROWS_MIN, Math.floor(raw.maxRows)))
   }
   if (typeof raw.initialRows === 'number' && Number.isFinite(raw.initialRows)) {
     s.initialRows = Math.min(s.maxRows, Math.max(1, Math.floor(raw.initialRows)))

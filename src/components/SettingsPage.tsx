@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { RATIO_UNITS, RESULT_UNITS, WEIGHT_UNITS } from '../types'
 import type { Settings, VoiceOption } from '../types'
+import { DECIMAL_PLACES_MAX, DECIMAL_PLACES_MIN, MAX_ROWS_MAX, MAX_ROWS_MIN, MAX_ROWS_STEP, VOICE_RATE_MAX, VOICE_RATE_MIN, VOICE_RATE_STEP } from '../constants'
 import { openExternal } from '../lib/updater'
 import type { UpdateCheckResult } from '../lib/updater'
 import pkg from '../../package.json'
@@ -111,10 +112,10 @@ export default function SettingsPage({
               </div>
               <div className="stepper">
                 <button className="stepper-btn"
-                  onClick={() => setSettings(prev => ({ ...prev, voiceRate: Math.max(0.5, +(prev.voiceRate - 0.25).toFixed(2)) }))}>−</button>
+                  onClick={() => setSettings(prev => ({ ...prev, voiceRate: Math.max(VOICE_RATE_MIN, +(prev.voiceRate - VOICE_RATE_STEP).toFixed(2)) }))}>−</button>
                 <span className="stepper-value">{settings.voiceRate}x</span>
                 <button className="stepper-btn"
-                  onClick={() => setSettings(prev => ({ ...prev, voiceRate: Math.min(2.0, +(prev.voiceRate + 0.25).toFixed(2)) }))}>+</button>
+                  onClick={() => setSettings(prev => ({ ...prev, voiceRate: Math.min(VOICE_RATE_MAX, +(prev.voiceRate + VOICE_RATE_STEP).toFixed(2)) }))}>+</button>
               </div>
             </div>
           </>
@@ -166,12 +167,12 @@ export default function SettingsPage({
           <div className="stepper">
               <button className="stepper-btn"
                 onClick={() => setSettings(prev => {
-                  const newMax = Math.max(5, prev.maxRows - 5)
+                  const newMax = Math.max(MAX_ROWS_MIN, prev.maxRows - MAX_ROWS_STEP)
                   return { ...prev, maxRows: newMax, initialRows: Math.min(prev.initialRows, newMax) }
                 })}>−</button>
             <span className="stepper-value">{settings.maxRows}</span>
             <button className="stepper-btn"
-              onClick={() => setSettings(prev => ({ ...prev, maxRows: Math.min(50, prev.maxRows + 5) }))}>+</button>
+              onClick={() => setSettings(prev => ({ ...prev, maxRows: Math.min(MAX_ROWS_MAX, prev.maxRows + MAX_ROWS_STEP) }))}>+</button>
           </div>
         </div>
       </div>
@@ -249,10 +250,10 @@ export default function SettingsPage({
           </div>
           <div className="stepper">
             <button className="stepper-btn"
-              onClick={() => setSettings(prev => ({ ...prev, decimalPlaces: Math.max(0, prev.decimalPlaces - 1) }))}>−</button>
+              onClick={() => setSettings(prev => ({ ...prev, decimalPlaces: Math.max(DECIMAL_PLACES_MIN, prev.decimalPlaces - 1) }))}>−</button>
             <span className="stepper-value">{settings.decimalPlaces}</span>
             <button className="stepper-btn"
-              onClick={() => setSettings(prev => ({ ...prev, decimalPlaces: Math.min(4, prev.decimalPlaces + 1) }))}>+</button>
+              onClick={() => setSettings(prev => ({ ...prev, decimalPlaces: Math.min(DECIMAL_PLACES_MAX, prev.decimalPlaces + 1) }))}>+</button>
           </div>
         </div>
       </div>

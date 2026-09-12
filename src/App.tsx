@@ -7,7 +7,7 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 
 const SettingsPage = lazy(() => import('./components/SettingsPage'))
 const HistoryPage = lazy(() => import('./components/HistoryPage'))
-import { DEFAULT_SETTINGS, MAX_HISTORY, MAX_RECIPE_ROWS } from './constants'
+import { DEFAULT_SETTINGS, DEBOUNCE_DRAFT_MS, DEBOUNCE_HISTORY_MS, DEBOUNCE_VOICE_MS, MAX_HISTORY, MAX_RECIPE_ROWS, STARTUP_CHECK_DELAY_MS } from './constants'
 
 import { calcColorPowder, convertWeight, createDefaultWeights, isSameBatch, recordSignature } from './lib/calc'
 import { playHaptic, playKeySound, speakNumber } from './lib/media'
@@ -249,7 +249,7 @@ function App() {
 
   // 启动后静默检查一次，有新版时设置页与首页角标提示
   useEffect(() => {
-    const t = window.setTimeout(() => { void checkUpdate(false) }, 4000)
+    const t = window.setTimeout(() => { void checkUpdate(false) }, STARTUP_CHECK_DELAY_MS)
     return () => window.clearTimeout(t)
   }, [checkUpdate])
 
@@ -286,7 +286,7 @@ function App() {
         savedAt: Date.now(),
       })
       saveDraftTimerRef.current = null
-    }, 300)
+    }, DEBOUNCE_DRAFT_MS)
     return () => {
       if (saveDraftTimerRef.current !== null) {
         window.clearTimeout(saveDraftTimerRef.current)
@@ -309,7 +309,7 @@ function App() {
     voiceTimerRef.current = window.setTimeout(() => {
       speakNumber(value, getVoice(), settings.voiceRate)
       voiceTimerRef.current = null
-    }, 600)
+    }, DEBOUNCE_VOICE_MS)
   }, [getVoice, settings.voiceRate])
 
   const handleInput = useCallback((value: string) => {
@@ -514,7 +514,7 @@ function App() {
       const record = buildRecordRef.current()
       if (!record) return
       persistRecord(record)
-    }, 1000)
+    }, DEBOUNCE_HISTORY_MS)
     return () => {
       if (saveHistoryTimerRef.current !== null) {
         window.clearTimeout(saveHistoryTimerRef.current)
