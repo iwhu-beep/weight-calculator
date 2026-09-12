@@ -7,7 +7,7 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 
 const SettingsPage = lazy(() => import('./components/SettingsPage'))
 const HistoryPage = lazy(() => import('./components/HistoryPage'))
-import { DEFAULT_SETTINGS, MAX_RECIPE_ROWS } from './constants'
+import { DEFAULT_SETTINGS, MAX_HISTORY, MAX_RECIPE_ROWS } from './constants'
 
 import { calcColorPowder, convertWeight, createDefaultWeights, isSameBatch, recordSignature } from './lib/calc'
 import { playHaptic, playKeySound, speakNumber } from './lib/media'
@@ -236,10 +236,15 @@ function App() {
   // 版本自检：手动检查更新（manual=true 时显示失败/结果状态）
   const checkUpdate = useCallback(async (manual: boolean) => {
     setCheckingUpdate(true)
-    const info = await checkForUpdate(manual)
-    setUpdateInfo(info)
-    setCheckingUpdate(false)
-    if (manual) setUpdateChecked(true)
+    try {
+      const info = await checkForUpdate(manual)
+      setUpdateInfo(info)
+      if (manual) setUpdateChecked(true)
+    } catch {
+      // network error etc — silently ignore, checkingUpdate will still reset below
+    } finally {
+      setCheckingUpdate(false)
+    }
   }, [])
 
   // 启动后静默检查一次，有新版时设置页与首页角标提示
@@ -478,13 +483,13 @@ function App() {
         id: latest.id,
         savedAt: Date.now(),
       }
-      const newHistory = [merged, ...historyRef.current.slice(1)].slice(0, 50)
+      const newHistory = [merged, ...historyRef.current.slice(1)].slice(0, MAX_HISTORY)
       setHistory(newHistory)
       saveHistory(newHistory)
       return
     }
     // 新批次：直接新增
-    const newHistory = [record, ...historyRef.current].slice(0, 50)
+    const newHistory = [record, ...historyRef.current].slice(0, MAX_HISTORY)
     setHistory(newHistory)
     saveHistory(newHistory)
   }, [])
