@@ -58,7 +58,11 @@ function App() {
   const initialDraft = initialDraftRef.current
   // 批次身份：恢复草稿时沿用草稿的批次，否则开新批次。
   // 同批次内的编辑会合并为一条历史记录，换批次则新增记录（不会覆盖上一条）。
-  const batchIdRef = useRef<string>(initialDraft?.batchId ?? newHistoryId())
+  // 惰性初始化：useRef 的初值每次渲染都会求值，这里避免每帧生成 UUID
+  const batchIdRef = useRef<string>('')
+  if (!batchIdRef.current) {
+    batchIdRef.current = initialDraft?.batchId ?? newHistoryId()
+  }
   const [page, setPage] = useState<Page>('home')
   const [settings, setSettings] = useState<Settings>(initialSettings)
   const [weights, setWeights] = useState<WeightEntry[]>(() =>
