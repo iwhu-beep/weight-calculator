@@ -1276,3 +1276,91 @@ html[data-theme='dark'] .toggle-slider {
   font-size: 12px;
   color: var(--text-hint);
 }
+
+/* ========== 目标重量反算 ========== */
+.target-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.target-hint {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-hint);
+  line-height: 1.5;
+}
+
+/* 比例合计超阈值提示 */
+.ratio-warn {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-light);
+  color: var(--warning);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* ========== 历史检索与日期分组 ========== */
+.history-search {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.history-search-input {
+  width: 100%;
+  padding: 11px 38px 11px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  color: var(--text-primary);
+  background: var(--card-bg);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.history-search-input:focus {
+  border-color: var(--primary);
+}
+
+.history-search-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-hint);
+  font-size: 14px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.history-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.history-group {
+  margin-bottom: 4px;
+}
+
+.history-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 10px 4px 6px;
+}
+
+.history-target-tag {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--primary-light);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+}

@@ -17,8 +17,11 @@ export const DEFAULT_SETTINGS: Settings = {
 }
 
 export const MAX_RECIPE_ROWS = 10
-export const MAX_HISTORY = 50
+export const MAX_HISTORY = 200
 export const MAX_PRESETS = 20
+
+// 比例合计告警阈值（‰）：超过 100‰（即 10%）时提示，防止误输入
+export const RATIO_SUM_WARN_PERMILLE = 100
 
 // 同批次判定：单位一致、配方组合一致、且最新记录在 10 分钟窗口内
 export const BATCH_WINDOW_MS = 10 * 60 * 1000
