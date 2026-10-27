@@ -49,7 +49,9 @@ export function recordSignature(r: HistoryRecord): string {
   ])
 }
 
-// 同批次判定：单位一致、配方组合一致、且最新记录在时间窗口内
+// 同批次判定：单位一致、配方组合一致，且属于同一批次。
+// 有 batchId 时以批次身份为准（同一批次隔多久回来编辑都算合并）；
+// 旧记录没有 batchId 时退化为「最新记录在时间窗口内」的判定。
 export function isSameBatch(latest: HistoryRecord, current: HistoryRecord): boolean {
   if (
     latest.weightUnit !== current.weightUnit ||
@@ -58,6 +60,8 @@ export function isSameBatch(latest: HistoryRecord, current: HistoryRecord): bool
   ) return false
   const recipeSig = (r: RecipeItem[]) => r.map(p => `${p.name}|${p.ratio}`).join(',')
   if (recipeSig(latest.recipe) !== recipeSig(current.recipe)) return false
+  // 批次身份优先：不同批次一律不合并，避免新批次覆盖上一条记录
+  if (latest.batchId && current.batchId) return latest.batchId === current.batchId
   const latestAt = latest.savedAt ?? 0
   if (Date.now() - latestAt > BATCH_WINDOW_MS) return false
   return true
