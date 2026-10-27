@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号 (例如: 1.5.0)'
+        description: '版本号（留空则自动读取 package.json）'
         required: false
-        default: '1.5.0'
+        default: ''
       release:
         description: '是否发布到 Releases'
         required: true
@@ -34,6 +34,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # 版本号单一来源：package.json；手动触发时填写的版本号优先
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build web app
         run: npm run build
@@ -87,10 +94,10 @@ jobs:
         if: github.event.inputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.event.inputs.version }}
-          name: 称重色粉计算器 v${{ github.event.inputs.version }}
+          tag_name: v${{ github.event.inputs.version || steps.version.outputs.value }}
+          name: 称重色粉计算器 v${{ github.event.inputs.version || steps.version.outputs.value }}
           body: |
-            ## 称重色粉计算器 v${{ github.event.inputs.version }}
+            ## 称重色粉计算器 v${{ github.event.inputs.version || steps.version.outputs.value }}
             
             点击下方 App.ipa 下载 iOS 安装包
             
