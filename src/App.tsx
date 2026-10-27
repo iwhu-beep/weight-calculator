@@ -15,13 +15,13 @@ import { checkForUpdate } from './lib/updater'
 import type { UpdateCheckResult } from './lib/updater'
 import {
   clearDraft,
-  isValidHistoryRecord,
-  isValidPreset,
   loadDraft,
   loadHistory,
   loadPresets,
   loadSettings,
   newHistoryId,
+  normalizeHistoryRecord,
+  normalizePreset,
   sanitizeSettings,
   saveDraft,
   saveHistory,
@@ -56,6 +56,13 @@ function App() {
     initialDraftRef.current = loadDraft()
   }
   const initialDraft = initialDraftRef.current
+  // 批次身份：恢复草稿时沿用草稿的批次，否则开新批次。
+  // 同批次内的编辑会合并为一条历史记录，换批次则新增记录（不会覆盖上一条）。
+  // 惰性初始化：useRef 的初值每次渲染都会求值，这里避免每帧生成 UUID
+  const batchIdRef = useRef<string>('')
+  if (!batchIdRef.current) {
+    batchIdRef.current = initialDraft?.batchId ?? newHistoryId()
+  }
   const [page, setPage] = useState<Page>('home')
   const [settings, setSettings] = useState<Settings>(initialSettings)
   const [weights, setWeights] = useState<WeightEntry[]>(() =>
@@ -284,6 +291,7 @@ function App() {
         weights: weights.map(w => w.value),
         recipe: recipe.map(r => ({ name: r.name, ratio: r.ratio })),
         savedAt: Date.now(),
+        batchId: batchIdRef.current,
       })
       saveDraftTimerRef.current = null
     }, DEBOUNCE_DRAFT_MS)
@@ -439,6 +447,8 @@ function App() {
     nextIdRef.current = settings.initialRows + 1
     setRecipe([{ id: 1, name: '', ratio: '' }])
     nextRecipeIdRef.current = 2
+    // 重置即开新批次：避免紧接着录入的新一批数据被并入上一条记录
+    batchIdRef.current = newHistoryId()
     clearDraft()
   }, [settings.initialRows])
 
@@ -457,6 +467,7 @@ function App() {
       id: newHistoryId(),
       date: new Date().toLocaleString('zh-CN'),
       savedAt: Date.now(),
+      batchId: batchIdRef.current,
       weights: weights.map(w => w.value),
       totalWeight: totalWeightRaw,
       recipe: storedRecipe,
@@ -471,11 +482,12 @@ function App() {
   const buildRecordRef = useRef(buildRecord)
   buildRecordRef.current = buildRecord
 
-  // 统一持久化入口：完全相同的记录跳过；同批次（配方/单位相同且在时间窗口内）更新最新一条；否则新增
+  // 统一持久化入口：同批次内更新最新一条；换批次（重置/回填/重开）则新增，绝不覆盖上一条
   const persistRecord = useCallback((record: HistoryRecord) => {
     const latest = historyRef.current[0]
-    // 内容完全相同则跳过，避免与自动保存重复
-    if (latest && recordSignature(latest) === recordSignature(record)) return
+    // 内容完全相同则跳过，避免与自动保存重复；但不同批次的相同数据仍应各自留档
+    const sameBatchIdentity = !latest?.batchId || !record.batchId || latest.batchId === record.batchId
+    if (latest && sameBatchIdentity && recordSignature(latest) === recordSignature(record)) return
     if (latest && isSameBatch(latest, record)) {
       // 同批次合并：保留原 id，刷新内容与时间
       const merged: HistoryRecord = {
@@ -532,6 +544,7 @@ function App() {
           weights: weightsRef.current.map(w => w.value),
           recipe: recipeRef.current.map(r => ({ name: r.name, ratio: r.ratio })),
           savedAt: Date.now(),
+          batchId: batchIdRef.current,
         })
       }
       if (saveHistoryTimerRef.current !== null) {
@@ -582,6 +595,8 @@ function App() {
       ratioUnit: recRatioUnit,
       resultUnit: recResultUnit,
     }))
+    // 回填是「新的一次录入」，换批次：后续编辑新增记录，不会改写被回填的那条
+    batchIdRef.current = newHistoryId()
     setPage('home')
   }, [settings.maxRows, settings.weightUnit])
 
@@ -690,17 +705,22 @@ function App() {
           saveSettings(importedSettings)
         }
         if (Array.isArray(data.history)) {
-          const recs: HistoryRecord[] = data.history.filter(isValidHistoryRecord)
+          const recs: HistoryRecord[] = data.history
+            .map(normalizeHistoryRecord)
+            .filter((r: HistoryRecord | null): r is HistoryRecord => r !== null)
           setHistory(recs)
           saveHistory(recs)
         }
         if (Array.isArray(data.presets)) {
-          const ps: RecipePreset[] = data.presets.filter(isValidPreset)
+          const ps: RecipePreset[] = data.presets
+            .map(normalizePreset)
+            .filter((p: RecipePreset | null): p is RecipePreset => p !== null)
           setPresets(ps)
           savePresets(ps)
         }
         // 导入即覆盖：清空草稿并按导入设置重置输入区
         clearDraft()
+        batchIdRef.current = newHistoryId()
         setWeights(createDefaultWeights(importedSettings.initialRows))
         nextIdRef.current = importedSettings.initialRows + 1
         setRecipe([{ id: 1, name: '', ratio: '' }])

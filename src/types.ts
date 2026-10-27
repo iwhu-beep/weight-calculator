@@ -13,6 +13,9 @@ export interface HistoryRecord {
   id: string
   date: string
   savedAt?: number
+  // 批次身份：同一次称重录入内保持相同，重置/回填时更换。
+  // 旧记录可能没有该字段，此时退化为「时间窗口」判定。
+  batchId?: string
   weights: string[]
   totalWeight: number
   recipe: RecipeItem[]
@@ -39,6 +42,8 @@ export interface Draft {
   weights: string[]
   recipe: { name: string; ratio: string }[]
   savedAt: number
+  // 草稿所属批次：恢复草稿后继续编辑仍归入同一批次，不会被拆成两条记录
+  batchId?: string
 }
 
 export interface VoiceOption {
