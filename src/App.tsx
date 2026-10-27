@@ -160,9 +160,9 @@ function App() {
   const totalWeightRaw = useMemo(() => weights.reduce((sum, w) => sum + (parseFloat(w.value) || 0), 0), [weights])
   const filledCount = useMemo(() => weights.filter(w => w.value !== '').length, [weights])
 
-  // 反算模式：目标总重优先，为空时回退到称重合计
+  // 反算模式：需在设置中开启，且填了目标总重；否则回退到称重合计
   const targetWeightValue = useMemo(() => parseFloat(targetWeight) || 0, [targetWeight])
-  const targetMode = targetWeightValue > 0
+  const targetMode = settings.targetModeEnabled && targetWeightValue > 0
   const effectiveWeight = targetMode ? targetWeightValue : totalWeightRaw
 
   const powderResults = useMemo(() => recipe.map(r => {
@@ -835,32 +835,34 @@ function App() {
         </button>
       </div>
 
-      {/* 目标反算卡：填写目标总重后，按目标值反推各色粉添加量 */}
-      <div className="card">
-        <div className="card-title">
-          <span className="card-title-icon">🎯</span>
-          目标重量反算
-        </div>
-        <div className="target-row">
-          <div className="weight-input-wrap">
-            <input type="text" inputMode="decimal"
-              className={`weight-input ${targetMode ? 'weight-input-filled' : ''}`}
-              placeholder={`目标总重(${settings.weightUnit})，留空则按称重合计`}
-              value={targetWeight}
-              onChange={e => handleTargetWeightChange(e.target.value)} />
-            <span className="weight-unit">{settings.weightUnit}</span>
+      {/* 目标反算卡：可在设置中关闭；填写目标总重后按目标值反推各色粉添加量 */}
+      {settings.targetModeEnabled && (
+        <div className="card">
+          <div className="card-title">
+            <span className="card-title-icon">🎯</span>
+            目标重量反算
           </div>
-          {targetWeight !== '' && (
-            <button className="remove-row-btn" onClick={() => setTargetWeight('')} title="清除目标重量">✕</button>
-          )}
+          <div className="target-row">
+            <div className="weight-input-wrap">
+              <input type="text" inputMode="decimal"
+                className={`weight-input ${targetMode ? 'weight-input-filled' : ''}`}
+                placeholder={`目标总重(${settings.weightUnit})，留空则按称重合计`}
+                value={targetWeight}
+                onChange={e => handleTargetWeightChange(e.target.value)} />
+              <span className="weight-unit">{settings.weightUnit}</span>
+            </div>
+            {targetWeight !== '' && (
+              <button className="remove-row-btn" onClick={() => setTargetWeight('')} title="清除目标重量">✕</button>
+            )}
+          </div>
+          <div className="target-hint">
+            {targetMode
+              ? `已按目标总重 ${targetWeightValue.toFixed(settings.decimalPlaces)} ${settings.weightUnit} 反算，称重数据不参与计算`
+                + (filledCount > 0 ? `（当前称重合计 ${totalWeightRaw.toFixed(settings.decimalPlaces)} ${settings.weightUnit}）` : '')
+              : '填写后按目标总重反推各色粉添加量，适合先定产量再配料'}
+          </div>
         </div>
-        <div className="target-hint">
-          {targetMode
-            ? `已按目标总重 ${targetWeightValue.toFixed(settings.decimalPlaces)} ${settings.weightUnit} 反算，称重数据不参与计算`
-              + (filledCount > 0 ? `（当前称重合计 ${totalWeightRaw.toFixed(settings.decimalPlaces)} ${settings.weightUnit}）` : '')
-            : '填写后按目标总重反推各色粉添加量，适合先定产量再配料'}
-        </div>
-      </div>
+      )}
 
       {/* Total Weight Card */}
       <div className="total-card">

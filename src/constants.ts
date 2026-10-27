@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: Settings = {
   resultUnit: 'g',
   screenAlwaysOn: false,
   darkMode: 'system',
+  targetModeEnabled: true,
 }
 
 export const MAX_RECIPE_ROWS = 10

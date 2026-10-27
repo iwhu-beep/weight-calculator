@@ -78,6 +78,8 @@ export interface Settings {
   resultUnit: ResultUnit
   screenAlwaysOn: boolean
   darkMode: 'system' | 'light' | 'dark'
+  // 是否在首页显示「目标重量反算」卡片；关闭后即使有目标值也按称重合计计算
+  targetModeEnabled: boolean
 }
 
 export type Page = 'home' | 'settings' | 'history'
