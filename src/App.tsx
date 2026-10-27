@@ -1,15 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
-import { Capacitor } from '@capacitor/core'
-import { Share } from '@capacitor/share'
-import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 
 const SettingsPage = lazy(() => import('./components/SettingsPage'))
 const HistoryPage = lazy(() => import('./components/HistoryPage'))
-import { DEFAULT_SETTINGS, DEBOUNCE_DRAFT_MS, DEBOUNCE_HISTORY_MS, DEBOUNCE_VOICE_MS, MAX_HISTORY, MAX_RECIPE_ROWS, STARTUP_CHECK_DELAY_MS } from './constants'
+import { DEFAULT_SETTINGS, DEBOUNCE_DRAFT_MS, DEBOUNCE_HISTORY_MS, DEBOUNCE_VOICE_MS, MAX_HISTORY, MAX_RECIPE_ROWS, RATIO_SUM_WARN_PERMILLE, STARTUP_CHECK_DELAY_MS } from './constants'
 
-import { calcColorPowder, convertWeight, createDefaultWeights, isSameBatch, recordSignature } from './lib/calc'
+import { calcColorPowder, convertWeight, createDefaultWeights, isSameBatch, recordSignature, sumRatioPermille } from './lib/calc'
+import { buildHistoryCsv } from './lib/csv'
+import { saveTextFile } from './lib/export'
 import { playHaptic, playKeySound, speakNumber } from './lib/media'
 import { checkForUpdate } from './lib/updater'
 import type { UpdateCheckResult } from './lib/updater'
@@ -75,6 +74,8 @@ function App() {
       ? initialDraft.recipe.map((r, i) => ({ id: i + 1, name: r.name, ratio: r.ratio }))
       : [{ id: 1, name: '', ratio: '' }]
   )
+  // 目标总重（反算模式）：填写后按目标值计算各色粉添加量，称重数据不再参与
+  const [targetWeight, setTargetWeight] = useState<string>(() => initialDraft?.targetWeight ?? '')
   const [presets, setPresets] = useState<RecipePreset[]>(loadPresets)
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory)
   const [voices, setVoices] = useState<VoiceOption[]>([])
@@ -158,27 +159,38 @@ function App() {
   // 原始输入值（按 weightUnit），用 useMemo 避免输入时重复遍历
   const totalWeightRaw = useMemo(() => weights.reduce((sum, w) => sum + (parseFloat(w.value) || 0), 0), [weights])
   const filledCount = useMemo(() => weights.filter(w => w.value !== '').length, [weights])
+
+  // 反算模式：需在设置中开启，且填了目标总重；否则回退到称重合计
+  const targetWeightValue = useMemo(() => parseFloat(targetWeight) || 0, [targetWeight])
+  const targetMode = settings.targetModeEnabled && targetWeightValue > 0
+  const effectiveWeight = targetMode ? targetWeightValue : totalWeightRaw
+
   const powderResults = useMemo(() => recipe.map(r => {
     const ratioValue = parseFloat(r.ratio) || 0
     return {
       name: r.name.trim(),
       ratio: ratioValue,
       amount: ratioValue > 0
-        ? calcColorPowder(totalWeightRaw, ratioValue, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
+        ? calcColorPowder(effectiveWeight, ratioValue, settings.weightUnit, settings.ratioUnit, settings.resultUnit)
         : 0,
     }
-  }), [recipe, totalWeightRaw, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
+  }), [recipe, effectiveWeight, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
   const activeResults = useMemo(() => powderResults.filter(p => p.ratio > 0), [powderResults])
   const hasAnyRatio = activeResults.length > 0
   const totalPowderAmount = useMemo(() => activeResults.reduce((s, p) => s + p.amount, 0), [activeResults])
+  // 比例合计（‰）：超过阈值说明可能误输入，界面上给出提示
+  const totalRatioPermille = useMemo(
+    () => sumRatioPermille(activeResults.map(p => p.ratio), settings.ratioUnit),
+    [activeResults, settings.ratioUnit]
+  )
 
   // 镜像 ref：供页面隐藏/关闭时强制 flush 防抖保存使用
   const weightsRef = useRef(weights)
   weightsRef.current = weights
   const recipeRef = useRef(recipe)
   recipeRef.current = recipe
-  const totalWeightRef = useRef(totalWeightRaw)
-  totalWeightRef.current = totalWeightRaw
+  const totalWeightRef = useRef(effectiveWeight)
+  totalWeightRef.current = effectiveWeight
   const hasAnyRatioRef = useRef(hasAnyRatio)
   hasAnyRatioRef.current = hasAnyRatio
 
@@ -292,6 +304,7 @@ function App() {
         recipe: recipe.map(r => ({ name: r.name, ratio: r.ratio })),
         savedAt: Date.now(),
         batchId: batchIdRef.current,
+        targetWeight,
       })
       saveDraftTimerRef.current = null
     }, DEBOUNCE_DRAFT_MS)
@@ -300,7 +313,7 @@ function App() {
         window.clearTimeout(saveDraftTimerRef.current)
       }
     }
-  }, [weights, recipe])
+  }, [weights, recipe, targetWeight])
 
   const getVoice = useCallback((): SpeechSynthesisVoice | null => {
     if (voices.length === 0) return null
@@ -361,6 +374,13 @@ function App() {
     if (!changed) return
     handleInput(value)
     setWeights(prev => prev.map(w => w.id === id ? { ...w, value } : w))
+  }, [handleInput])
+
+  // 目标总重输入：仅允许数字，触发与其他数值输入一致的按键反馈
+  const handleTargetWeightChange = useCallback((value: string) => {
+    if (value !== '' && !/^\d*\.?\d*$/.test(value)) return
+    handleInput(value)
+    setTargetWeight(value)
   }, [handleInput])
 
   const handleRecipeRatioChange = useCallback((id: number, value: string) => {
@@ -447,6 +467,7 @@ function App() {
     nextIdRef.current = settings.initialRows + 1
     setRecipe([{ id: 1, name: '', ratio: '' }])
     nextRecipeIdRef.current = 2
+    setTargetWeight('')
     // 重置即开新批次：避免紧接着录入的新一批数据被并入上一条记录
     batchIdRef.current = newHistoryId()
     clearDraft()
@@ -460,7 +481,7 @@ function App() {
         return {
           name: r.name.trim(),
           ratio,
-          amount: calcColorPowder(totalWeightRaw, ratio, settings.weightUnit, settings.ratioUnit, settings.resultUnit),
+          amount: calcColorPowder(effectiveWeight, ratio, settings.weightUnit, settings.ratioUnit, settings.resultUnit),
         }
       })
     return {
@@ -469,14 +490,15 @@ function App() {
       savedAt: Date.now(),
       batchId: batchIdRef.current,
       weights: weights.map(w => w.value),
-      totalWeight: totalWeightRaw,
+      totalWeight: effectiveWeight,
+      targetWeight: targetMode ? targetWeightValue : undefined,
       recipe: storedRecipe,
       totalPowderAmount: storedRecipe.reduce((s, p) => s + p.amount, 0),
       weightUnit: settings.weightUnit,
       ratioUnit: settings.ratioUnit,
       resultUnit: settings.resultUnit,
     }
-  }, [weights, totalWeightRaw, recipe, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
+  }, [weights, effectiveWeight, targetMode, targetWeightValue, recipe, settings.weightUnit, settings.ratioUnit, settings.resultUnit])
 
   // 通过 ref 取最新的 buildRecord，避免历史防抖被无关重渲染重置
   const buildRecordRef = useRef(buildRecord)
@@ -507,17 +529,18 @@ function App() {
   }, [])
 
   const saveRecord = useCallback(() => {
-    if (filledCount === 0) return
+    // 反算模式下没有称重数据也应能保存
+    if (filledCount === 0 && !targetMode) return
     const record = buildRecord()
     if (!record) return
     persistRecord(record)
     clearDraft()
-  }, [filledCount, buildRecord, persistRecord])
+  }, [filledCount, targetMode, buildRecord, persistRecord])
 
   // 自动保存历史记录（防抖）：配比有有效结果时自动存档。
   // 通过 buildRecordRef 取最新构建函数，避免防抖被无关重渲染重置
   useEffect(() => {
-    if (totalWeightRaw <= 0 || !hasAnyRatio) return
+    if (effectiveWeight <= 0 || !hasAnyRatio) return
     if (saveHistoryTimerRef.current !== null) {
       window.clearTimeout(saveHistoryTimerRef.current)
     }
@@ -532,7 +555,7 @@ function App() {
         window.clearTimeout(saveHistoryTimerRef.current)
       }
     }
-  }, [weights, recipe, totalWeightRaw, hasAnyRatio, settings.weightUnit, settings.ratioUnit, settings.resultUnit, persistRecord])
+  }, [weights, recipe, effectiveWeight, hasAnyRatio, settings.weightUnit, settings.ratioUnit, settings.resultUnit, persistRecord])
 
   // 页面隐藏/关闭时强制 flush 挂起的防抖保存，避免最后输入丢失
   useEffect(() => {
@@ -577,6 +600,8 @@ function App() {
       : [{ id: 1, name: '', ratio: '' }]
     setRecipe(loadedRecipe)
     nextRecipeIdRef.current = loadedRecipe.length + 1
+    // 反算记录回填时恢复目标总重，普通记录清空
+    setTargetWeight(record.targetWeight && record.targetWeight > 0 ? String(record.targetWeight) : '')
     // 采用记录自带单位（非法值回退当前），记录数值本身即按该单位录入，无需换算
     const recWeightUnit: WeightUnit = (WEIGHT_UNITS as readonly string[]).includes(record.weightUnit)
       ? record.weightUnit as WeightUnit
@@ -628,64 +653,39 @@ function App() {
 
   // 导出全部配置（设置、历史、配方预设）为 JSON 文件
   const exportBackup = useCallback(async () => {
+    const data = {
+      app: 'weight-calculator',
+      version: pkg.version,
+      exportedAt: new Date().toISOString(),
+      settings,
+      history: historyRef.current,
+      presets: presetsRef.current,
+    }
+    const json = JSON.stringify(data, null, 2)
+    const filename = `weight-calculator-backup-${new Date().toISOString().slice(0, 10)}.json`
+    if (await saveTextFile(filename, json, 'application/json')) return
+    // 原生分享不可用时降级为复制到剪贴板
     try {
-      const data = {
-        app: 'weight-calculator',
-        version: pkg.version,
-        exportedAt: new Date().toISOString(),
-        settings,
-        history: historyRef.current,
-        presets: presetsRef.current,
-      }
-      const json = JSON.stringify(data, null, 2)
-      const filename = `weight-calculator-backup-${new Date().toISOString().slice(0, 10)}.json`
-      // 原生 App：写入临时文件后调起系统分享面板（iOS 选择「存储到文件」即可导出）
-      if (Capacitor.isNativePlatform()) {
-        try {
-          await Filesystem.writeFile({
-            path: filename,
-            data: json,
-            directory: Directory.Cache,
-            encoding: Encoding.UTF8,
-          })
-          const uriResult = await Filesystem.getUri({
-            directory: Directory.Cache,
-            path: filename,
-          })
-          await Share.share({
-            title: '称重色粉计算器备份',
-            files: [uriResult.uri],
-            dialogTitle: '导出配置备份',
-          })
-          return
-        } catch (err) {
-          console.warn('native share failed, fallback to clipboard', err)
-          // 原生分享不可用时降级为复制到剪贴板
-        }
-      }
-      // 降级：复制 JSON 到剪贴板并提示保存
-      try {
-        await navigator.clipboard.writeText(json)
-        window.alert('配置已复制到剪贴板，请粘贴保存为 ' + filename)
-        return
-      } catch (err) {
-        console.warn('clipboard failed, fallback to download', err)
-      }
-      // 最终降级：网页下载
-      const blob = new Blob([json], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      a.rel = 'noopener'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      await navigator.clipboard.writeText(json)
+      window.alert('配置已复制到剪贴板，请粘贴保存为 ' + filename)
     } catch {
       window.alert('导出失败，请重试')
     }
   }, [settings])
+
+  // 导出历史记录为 CSV（每种色粉一行），供 Excel 对账
+  const exportHistoryCsv = useCallback(async () => {
+    const records = historyRef.current
+    if (records.length === 0) {
+      window.alert('暂无历史记录可导出')
+      return
+    }
+    const csv = buildHistoryCsv(records, settings.decimalPlaces)
+    const filename = `weight-calculator-history-${new Date().toISOString().slice(0, 10)}.csv`
+    if (!(await saveTextFile(filename, csv, 'text/csv;charset=utf-8'))) {
+      window.alert('导出失败，请重试')
+    }
+  }, [settings.decimalPlaces])
 
   // 导入配置备份文件并覆盖当前数据
   const importBackup = useCallback((file: File) => {
@@ -721,6 +721,7 @@ function App() {
         // 导入即覆盖：清空草稿并按导入设置重置输入区
         clearDraft()
         batchIdRef.current = newHistoryId()
+        setTargetWeight('')
         setWeights(createDefaultWeights(importedSettings.initialRows))
         nextIdRef.current = importedSettings.initialRows + 1
         setRecipe([{ id: 1, name: '', ratio: '' }])
@@ -763,6 +764,7 @@ function App() {
           loadRecord={loadRecord}
           deleteRecord={deleteRecord}
           clearHistory={clearHistory}
+          exportHistoryCsv={exportHistoryCsv}
           onBack={() => setPage('home')}
         />
       </Suspense>
@@ -787,9 +789,11 @@ function App() {
       </div>
 
       {/* 实时结果预览横幅：结果有效时吸顶常驻，点击滚动到详细结果 */}
-      {totalWeightRaw > 0 && hasAnyRatio && (
+      {effectiveWeight > 0 && hasAnyRatio && (
         <div className="result-banner" onClick={scrollToResult}>
-          <span className="result-banner-item result-banner-total">⚖️ {totalWeightRaw.toFixed(settings.decimalPlaces)} {settings.weightUnit}</span>
+          <span className="result-banner-item result-banner-total">
+            {targetMode ? '🎯' : '⚖️'} {effectiveWeight.toFixed(settings.decimalPlaces)} {settings.weightUnit}
+          </span>
           <span className="result-banner-item">🎨 {activeResults.length} 种</span>
           <span className="result-banner-item result-banner-amount">✅ 合计 {totalPowderAmount.toFixed(settings.decimalPlaces)} {settings.resultUnit}</span>
           <span className="result-banner-arrow">▾</span>
@@ -831,6 +835,35 @@ function App() {
         </button>
       </div>
 
+      {/* 目标反算卡：可在设置中关闭；填写目标总重后按目标值反推各色粉添加量 */}
+      {settings.targetModeEnabled && (
+        <div className="card">
+          <div className="card-title">
+            <span className="card-title-icon">🎯</span>
+            目标重量反算
+          </div>
+          <div className="target-row">
+            <div className="weight-input-wrap">
+              <input type="text" inputMode="decimal"
+                className={`weight-input ${targetMode ? 'weight-input-filled' : ''}`}
+                placeholder={`目标总重(${settings.weightUnit})，留空则按称重合计`}
+                value={targetWeight}
+                onChange={e => handleTargetWeightChange(e.target.value)} />
+              <span className="weight-unit">{settings.weightUnit}</span>
+            </div>
+            {targetWeight !== '' && (
+              <button className="remove-row-btn" onClick={() => setTargetWeight('')} title="清除目标重量">✕</button>
+            )}
+          </div>
+          <div className="target-hint">
+            {targetMode
+              ? `已按目标总重 ${targetWeightValue.toFixed(settings.decimalPlaces)} ${settings.weightUnit} 反算，称重数据不参与计算`
+                + (filledCount > 0 ? `（当前称重合计 ${totalWeightRaw.toFixed(settings.decimalPlaces)} ${settings.weightUnit}）` : '')
+              : '填写后按目标总重反推各色粉添加量，适合先定产量再配料'}
+          </div>
+        </div>
+      )}
+
       {/* Total Weight Card */}
       <div className="total-card">
         <div className="card-title">
@@ -838,11 +871,11 @@ function App() {
           总重量
         </div>
         <div>
-          <span key={totalWeightRaw} className="total-value">{totalWeightRaw.toFixed(settings.decimalPlaces)}</span>
+          <span key={effectiveWeight} className="total-value">{effectiveWeight.toFixed(settings.decimalPlaces)}</span>
           <span className="total-unit">{settings.weightUnit}</span>
         </div>
         <div className="total-detail">
-          已录入 {filledCount} 次
+          {targetMode ? '目标总重（反算模式）' : `已录入 ${filledCount} 次`}
         </div>
       </div>
 
@@ -915,14 +948,20 @@ function App() {
           <button className="add-row-btn" onClick={addRecipeRow} disabled={recipe.length >= MAX_RECIPE_ROWS}>
             {recipe.length >= MAX_RECIPE_ROWS ? '已达上限（10 种色粉）' : '+ 添加色粉'}
           </button>
-          {totalWeightRaw === 0 && (
-            <div className="empty-hint">请先输入称重数据</div>
+          {hasAnyRatio && totalRatioPermille > RATIO_SUM_WARN_PERMILLE && (
+            <div className="ratio-warn">
+              ⚠️ 比例合计 {(totalRatioPermille / (settings.ratioUnit === '%' ? 10 : 1)).toFixed(2)} {settings.ratioUnit}
+              （≈ {(totalRatioPermille / 10).toFixed(1)}%），超过 {RATIO_SUM_WARN_PERMILLE}‰，请确认是否误输入
+            </div>
+          )}
+          {effectiveWeight === 0 && (
+            <div className="empty-hint">请先输入称重数据，或填写目标总重</div>
           )}
         </div>
       </div>
 
       {/* Result Card */}
-      {totalWeightRaw > 0 && hasAnyRatio && (
+      {effectiveWeight > 0 && hasAnyRatio && (
         <div ref={resultCardRef} className="result-card result-card-sticky">
           <div className="card-title">
             <span className="card-title-icon">✅</span>
@@ -944,7 +983,8 @@ function App() {
             </div>
           )}
           <div className="result-formula">
-            总重量 {totalWeightRaw.toFixed(settings.decimalPlaces)} {settings.weightUnit} · 共 {activeResults.length} 种色粉
+            {targetMode ? '目标总重' : '总重量'} {effectiveWeight.toFixed(settings.decimalPlaces)} {settings.weightUnit} · 共 {activeResults.length} 种色粉
+            {targetMode ? ' · 按目标反算' : ''}
           </div>
         </div>
       )}
@@ -952,7 +992,7 @@ function App() {
 
       {/* Action Buttons */}
       <div className="actions">
-        <button className="btn btn-primary" onClick={saveRecord} disabled={filledCount === 0}>
+        <button className="btn btn-primary" onClick={saveRecord} disabled={filledCount === 0 && !targetMode}>
           💾 保存记录
         </button>
         <button className="btn btn-outline" onClick={resetAll}>

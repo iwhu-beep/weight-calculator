@@ -79,3 +79,13 @@ export function convertWeight(value: string, from: WeightUnit, to: WeightUnit): 
   const factor = from === 'kg' ? 1000 : 1 / 1000
   return String(parseFloat((num * factor).toFixed(10)))
 }
+
+// 比例统一换算为 ‰（千分比），用于合计校验
+export function ratioToPermille(value: number, unit: RatioUnit): number {
+  return unit === '%' ? value * 10 : value
+}
+
+// 配方比例合计（‰），调用方只传有效比例
+export function sumRatioPermille(ratios: number[], unit: RatioUnit): number {
+  return ratios.reduce((s, r) => s + ratioToPermille(r, unit), 0)
+}

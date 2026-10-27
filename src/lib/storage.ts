@@ -112,6 +112,7 @@ export function sanitizeSettings(raw: Record<string, unknown>): Settings {
     s.resultUnit = raw.resultUnit as ResultUnit
   }
   if (raw.screenAlwaysOn === true) s.screenAlwaysOn = true
+  if (typeof raw.targetModeEnabled === 'boolean') s.targetModeEnabled = raw.targetModeEnabled
   if (raw.darkMode === 'light' || raw.darkMode === 'dark' || raw.darkMode === 'system') {
     s.darkMode = raw.darkMode
   }

@@ -18,6 +18,8 @@ export interface HistoryRecord {
   batchId?: string
   weights: string[]
   totalWeight: number
+  // 反算模式下记录的目标总重（无则为普通称重记录）
+  targetWeight?: number
   recipe: RecipeItem[]
   totalPowderAmount: number
   weightUnit: string
@@ -44,6 +46,8 @@ export interface Draft {
   savedAt: number
   // 草稿所属批次：恢复草稿后继续编辑仍归入同一批次，不会被拆成两条记录
   batchId?: string
+  // 目标总重输入值（空字符串表示未启用反算）
+  targetWeight?: string
 }
 
 export interface VoiceOption {
@@ -74,6 +78,8 @@ export interface Settings {
   resultUnit: ResultUnit
   screenAlwaysOn: boolean
   darkMode: 'system' | 'light' | 'dark'
+  // 是否在首页显示「目标重量反算」卡片；关闭后即使有目标值也按称重合计计算
+  targetModeEnabled: boolean
 }
 
 export type Page = 'home' | 'settings' | 'history'

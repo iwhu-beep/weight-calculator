@@ -179,6 +179,24 @@ export default function SettingsPage({
 
       <div className="card">
         <div className="card-title">
+          <span className="card-title-icon">🧮</span>
+          计算设置
+        </div>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">目标重量反算</div>
+            <div className="setting-desc">首页显示「目标重量反算」卡片，按目标产量反推色粉用量；关闭后仅按称重合计计算</div>
+          </div>
+          <label className="toggle">
+            <input type="checkbox" checked={settings.targetModeEnabled}
+              onChange={e => setSettings(prev => ({ ...prev, targetModeEnabled: e.target.checked }))} />
+            <span className="toggle-slider" />
+          </label>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">
           <span className="card-title-icon">📏</span>
           单位设置
         </div>
