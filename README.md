@@ -1,6 +1,12 @@
 # ⚖️ 称重色粉计算器
 
-一款专为工业生产场景设计的称重与色粉配比计算工具，支持 iOS / Web 运行。
+一款专为工业生产场景设计的称重与色粉配比计算工具，支持 iOS / Android / Web 运行。
+
+## 🚀 v1.6.0 更新内容
+
+- **Android 版** — 新增 Android 平台支持，GitHub Actions 自动构建签名 APK，可直接安装；同版本升级覆盖安装即可，无需卸载
+- **返回键适配** — 在设置页、历史页按系统返回键会先回到首页，而不是直接退出 App
+- **签名固定** — 使用项目自签名证书（有效期 30 年），后续版本升级不会因签名变化要求卸载重装
 
 ## 🚀 v1.5.9 更新内容
 
@@ -100,6 +106,30 @@ npm run dev
 npm run build
 npm run preview
 ```
+
+### 构建 Android APK（通过 GitHub Actions）
+
+推送到 `master` 会自动构建 APK，也可以在 Actions 页面手动触发（可勾选发布到 Releases）。
+
+**下载方式：**
+1. 打开 [Actions 页面](https://github.com/iwhu-beep/weight-calculator/actions)
+2. 点击最新的 `Build Android APK` 成功构建
+3. 在 Artifacts 区域下载 `android-apk`
+
+APK 使用仓库内 `signing/android-release.p12.b64` 的自签名证书（有效期 30 年），**同一证书签名的版本可以直接覆盖安装**，升级不会丢数据。若更换证书，已装版本必须先卸载。
+
+### 本地构建 Android（需要 JDK 21 + Android SDK）
+
+```bash
+npm run build
+npx cap add android
+npx capacitor-assets generate --android
+node scripts/patch-android.mjs   # 注入版本号与签名配置
+npx cap sync android
+cd android && ./gradlew assembleRelease
+```
+
+产物在 `android/app/build/outputs/apk/release/`。签名相关环境变量：`KEYSTORE_PATH`、`KEYSTORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`。
 
 ### 构建 iOS IPA（通过 GitHub Actions）
 

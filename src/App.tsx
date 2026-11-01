@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { KeepAwake } from '@capacitor-community/keep-awake'
+import { Capacitor } from '@capacitor/core'
+import { App as CapApp } from '@capacitor/app'
 
 const SettingsPage = lazy(() => import('./components/SettingsPage'))
 const HistoryPage = lazy(() => import('./components/HistoryPage'))
@@ -99,6 +101,25 @@ function App() {
   historyRef.current = history
   const presetsRef = useRef<RecipePreset[]>(presets)
   presetsRef.current = presets
+
+  // Android 返回键：在设置页/历史页时回首页，首页再按才退出 App。
+  // 不加这层处理的话，任何页面按返回都会直接退出，草稿虽已自动保存但体验很差。
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+    let disposed = false
+    const handle = CapApp.addListener('backButton', () => {
+      if (disposed) return
+      if (page !== 'home') {
+        setPage('home')
+        return
+      }
+      void CapApp.exitApp()
+    })
+    return () => {
+      disposed = true
+      void handle.then(h => h.remove())
+    }
+  }, [page])
 
   // 屏幕常亮 - 优先使用 Capacitor KeepAwake，其次 Wake Lock API
   useEffect(() => {

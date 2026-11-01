@@ -1,7 +1,7 @@
 {
   "name": "weight-calculator",
   "private": true,
-  "version": "1.5.9",
+  "version": "1.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@capacitor-community/keep-awake": "^8.0.1",
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/app": "^8.1.2",
     "@capacitor/browser": "^8.0.4",
     "@capacitor/core": "^8.4.0",
     "@capacitor/filesystem": "^8.1.2",
