@@ -45,9 +45,15 @@ jobs:
       # （该 action 默认安装已废弃的 "tools" 包，在 cmdline-tools 16 上会直接失败）
       - name: Install SDK platform
         run: |
-          echo "SDK root: ${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f | head -1)
+          fi
+          echo "SDK root: $SDK_ROOT"
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install dependencies
         run: npm ci
