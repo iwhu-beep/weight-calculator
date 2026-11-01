@@ -24,8 +24,6 @@ jobs:
 
     env:
       KEY_ALIAS: wc-release
-      KEYSTORE_PASSWORD: WcSign2026
-      KEY_PASSWORD: WcSign2026
 
     steps:
       - name: Checkout code
@@ -43,14 +41,13 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      # compileSdk 36 需要单独装平台包，runner 预装的通常落后一个大版本
+      # runner 已预装 Android SDK 与 sdkmanager，无需 setup-android
+      # （该 action 默认安装已废弃的 "tools" 包，在 cmdline-tools 16 上会直接失败）
       - name: Install SDK platform
         run: |
+          echo "SDK root: ${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install dependencies
         run: npm ci
@@ -74,10 +71,19 @@ jobs:
         run: node scripts/patch-android.mjs
 
       - name: Restore keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           mkdir -p "$RUNNER_TEMP/signing"
           base64 -d signing/android-release.p12.b64 > "$RUNNER_TEMP/signing/release.p12"
           echo "KEYSTORE_PATH=$RUNNER_TEMP/signing/release.p12" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          # 先校验密码，避免签名阶段才报错、排查成本高
+          keytool -list -keystore "$RUNNER_TEMP/signing/release.p12" \
+            -storetype PKCS12 -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" > /dev/null
+          echo "✓ keystore 校验通过"
 
       - name: Sync Android project
         run: npx cap sync android
